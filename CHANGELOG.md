@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion timer cancellation
+
+- Cancel and rearm guarded Thermostat Suggestion boundary timers when UTC
+  changes, suggestions are removed, time is lost, or state is restored.
+  This prevents stale sleeping timers after clock jumps while production
+  TSUGGEST remains gated.
+
 ### Matter 1.6 Joint Fabric SDK Binding fetch interoperability
 
 - Add a separate official SDK v1.6.1.0 inverse-JFA GitHub Actions lane that

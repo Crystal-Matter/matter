@@ -723,9 +723,16 @@ module Matter
                      local_time_provider : Proc(Time?)? = nil,
                      utc_time_provider : Proc(UInt32?)? = nil,
                      @max_thermostat_suggestions : UInt8 = MIN_SUGGESTION_CAPACITY,
-                     @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Nil) = ->(delay : Time::Span, action : Proc(Nil)) : Nil {
-                       spawn { sleep delay; action.call }
-                       nil
+                     @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Proc(Nil)) = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+                       cancel = ::Channel(Nil).new
+                       spawn do
+                         select
+                         when cancel.receive?
+                         when timeout(delay)
+                           action.call
+                         end
+                       end
+                       -> : Nil { cancel.close unless cancel.closed? }
                      })
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -758,6 +765,8 @@ module Matter
         @suggestion_not_following_reason = nil.as(ThermostatSuggestionNotFollowingReason?)
         @last_suggestion_now = nil.as(UInt32?)
         @suggestion_timer_boundary = nil.as(UInt32?)
+        @suggestion_timer_started_at_utc = nil.as(UInt32?)
+        @suggestion_timer_cancel = nil.as(Proc(Nil)?)
         @suggestion_timer_generation = 0_u64
         @applying_suggestion = false
         @applying_preset = false
@@ -1079,10 +1088,7 @@ module Matter
       def tick_suggestions(now_epoch : UInt32?) : Int32
         unless now = now_epoch
           @last_suggestion_now = nil
-          if @suggestion_timer_boundary
-            @suggestion_timer_generation &+= 1_u64
-            @suggestion_timer_boundary = nil
-          end
+          cancel_suggestion_boundary
           if @current_thermostat_suggestion
             @current_thermostat_suggestion = nil
             suggestion_attribute_changed(ATTR_CURRENT_THERMOSTAT_SUGGESTION)
@@ -1148,18 +1154,30 @@ module Matter
             next_boundary = {next_boundary || UInt32::MAX, entry.expiration_time}.min
           end
         end
-        return if @suggestion_timer_boundary == next_boundary
-        @suggestion_timer_boundary = next_boundary
-        @suggestion_timer_generation &+= 1_u64
+        return if @suggestion_timer_boundary == next_boundary && @suggestion_timer_started_at_utc == now
+        cancel_suggestion_boundary
         return unless boundary = next_boundary
+        @suggestion_timer_boundary = boundary
+        @suggestion_timer_started_at_utc = now
         generation = @suggestion_timer_generation
         delay = (boundary.to_i64 - now.to_i64).seconds
-        @suggestion_timer_scheduler.call(delay, -> : Nil {
+        @suggestion_timer_cancel = @suggestion_timer_scheduler.call(delay, -> : Nil {
           if @suggestion_timer_generation == generation
             @suggestion_timer_boundary = nil
+            @suggestion_timer_started_at_utc = nil
+            @suggestion_timer_cancel = nil
             tick_suggestions(@utc_time_provider.call)
           end
         })
+      end
+
+      private def cancel_suggestion_boundary : Nil
+        @suggestion_timer_generation &+= 1_u64
+        @suggestion_timer_boundary = nil
+        @suggestion_timer_started_at_utc = nil
+        cancel = @suggestion_timer_cancel
+        @suggestion_timer_cancel = nil
+        cancel.try(&.call)
       end
 
       # Host-owned schedule contents. The advertised MSCH profile is fixed at
@@ -2594,8 +2612,7 @@ module Matter
         @pending_preset_write = nil
         @pending_schedule_write = nil
         @combined_atomic_write = false
-        @suggestion_timer_generation &+= 1_u64
-        @suggestion_timer_boundary = nil
+        cancel_suggestion_boundary
         raw = document[PRESET_STATE_KEY]?
         if raw
           state = PresetState.from_document(raw.as?(Storage::Document) ||
