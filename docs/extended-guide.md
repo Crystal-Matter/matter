@@ -793,6 +793,10 @@ removed, synchronized UTC is lost, or state is restored. A UTC change rearms
 the same future boundary using the new time, so an old sleeping timer cannot
 delay a suggestion after a clock jump. The default scheduler releases its
 cancelled fiber; injected schedulers return a cancellation callback.
+Guarded AddThermostatSuggestion validates synchronized time, a known preset,
+the capacity after pruning expired entries, and then the future EffectiveTime
+window. A full list therefore reports ResourceExhausted even when the proposed
+time is more than 24 hours ahead.
 
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset
