@@ -13,26 +13,27 @@ private alias SwitchAccessControl = Matter::Cluster::AccessControl
 module SdkJfaInverseDriver
   extend self
 
-  FABRIC_ID            =   0xA200_u64
-  CONTROLLER_ID        =   0xA201_u64
-  SDK_JFA_ID           =   0xA202_u64
-  TEST_VENDOR_ID       =   0xFFF1_u16
-  SDK_JFA_PORT         =         5533
-  SDK_DISCRIMINATOR    =     3840_u16
-  SDK_PASSCODE         = 11022033_u32
-  JFA_ENDPOINT         =        1_u16
-  TIMEOUT              = 90.seconds
-  SDK_PAA_CERT         = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
-  SDK_CD_CERT_GLOB     = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
-  TEST_GROUP_ID        = 0x1234_u16
-  TEST_KEY_SET_ID      = 0x1235_u16
-  TEST_NODE_ID         = 0xA203_u64
-  TEST_ADMIN_ID        = 0xA204_u64
-  TEST_LIVE_NODE_ID    = 0xA205_u64
-  TEST_BINDING_NODE_ID = 0xA206_u64
-  TEST_ACL_SUBJECT_ID  = 0xA207_u64
-  SWITCH_ENDPOINT      =      1_u16
-  TEST_ADMIN_VENDOR_ID = 0xFFF2_u16
+  FABRIC_ID                  =   0xA200_u64
+  CONTROLLER_ID              =   0xA201_u64
+  SDK_JFA_ID                 =   0xA202_u64
+  TEST_VENDOR_ID             =   0xFFF1_u16
+  SDK_JFA_PORT               =         5533
+  SDK_DISCRIMINATOR          =     3840_u16
+  SDK_PASSCODE               = 11022033_u32
+  JFA_ENDPOINT               =        1_u16
+  TIMEOUT                    = 90.seconds
+  SDK_PAA_CERT               = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+  SDK_CD_CERT_GLOB           = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+  TEST_GROUP_ID              = 0x1234_u16
+  TEST_KEY_SET_ID            = 0x1235_u16
+  TEST_NODE_ID               = 0xA203_u64
+  TEST_ADMIN_ID              = 0xA204_u64
+  TEST_LIVE_NODE_ID          = 0xA205_u64
+  TEST_BINDING_NODE_ID       = 0xA206_u64
+  TEST_ACL_SUBJECT_ID        = 0xA207_u64
+  TEST_OTHER_BINDING_NODE_ID = 0xA208_u64
+  SWITCH_ENDPOINT            =      1_u16
+  TEST_ADMIN_VENDOR_ID       = 0xFFF2_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
   SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
@@ -572,19 +573,44 @@ module SdkJfaInverseDriver
       end
       committed_binding = binding_entry ||
                           raise Matter::ProtocolError.new("SDK JFA committed binding entry disappeared")
-      # The pinned JFA's Binding fetch callback dereferences an absent
-      # objectToWrite when reading a nonempty list. Restore the live target
-      # directly so its RemoveBinding command can clear the Datastore entry.
-      binding_restore = im.write_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: SwitchBinding::CLUSTER_ID,
-        attribute_id: SwitchBinding::ATTR_BINDING,
-        value: initial_switch_bindings.to_tlv)
-      unless binding_restore.write_responses.all? { |entry| entry.status.status == Matter::InteractionModel::StatusCode::Success.value }
-        raise Matter::ProtocolError.new("Crystal CASE could not restore the switch Binding baseline")
-      end
-      unless switch_binding_targets(im, switch_session, switch_peer) == initial_switch_bindings
-        raise Matter::ProtocolError.new("Switch Binding baseline changed after direct CASE cleanup")
+      verify_nonempty_fetch = ENV["MATTER_INTEROP_VERIFY_NONEMPTY_BINDING_FETCH"]? == "1"
+      expected_switch_bindings = initial_switch_bindings
+      if verify_nonempty_fetch
+        # SDK 1.6.1 fixes the nonempty Binding fetch crash. An unrelated live
+        # target must survive the SDK removal attempt regardless of whether
+        # the SDK version propagates deletion of the managed target.
+        unrelated_binding = SwitchBinding::Target.new(
+          node: TEST_OTHER_BINDING_NODE_ID, endpoint: SWITCH_ENDPOINT,
+          fabric_index: switch_fabric_index)
+        expected_switch_bindings = initial_switch_bindings + [unrelated_binding]
+        binding_write = im.write_attribute(session: switch_session, peer: switch_peer,
+          endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+          cluster_id: SwitchBinding::CLUSTER_ID,
+          attribute_id: SwitchBinding::ATTR_BINDING,
+          value: (switch_binding_targets(im, switch_session, switch_peer) + [unrelated_binding]).to_tlv)
+        unless binding_write.write_responses.all? { |entry| entry.status.status == Matter::InteractionModel::StatusCode::Success.value }
+          raise Matter::ProtocolError.new("Crystal CASE could not add the unrelated switch Binding")
+        end
+        unless switch_binding_targets(im, switch_session, switch_peer).any? do |entry|
+                 entry.node == TEST_OTHER_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT &&
+                 entry.fabric_index == switch_fabric_index
+               end
+          raise Matter::ProtocolError.new("Unrelated switch Binding was not installed before SDK removal")
+        end
+      else
+        # SDK 1.6.0 dereferences an absent objectToWrite during a nonempty
+        # Binding fetch. Retain its existing Datastore-only removal baseline.
+        binding_restore = im.write_attribute(session: switch_session, peer: switch_peer,
+          endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+          cluster_id: SwitchBinding::CLUSTER_ID,
+          attribute_id: SwitchBinding::ATTR_BINDING,
+          value: initial_switch_bindings.to_tlv)
+        unless binding_restore.write_responses.all? { |entry| entry.status.status == Matter::InteractionModel::StatusCode::Success.value }
+          raise Matter::ProtocolError.new("Crystal CASE could not restore the switch Binding baseline")
+        end
+        unless switch_binding_targets(im, switch_session, switch_peer) == initial_switch_bindings
+          raise Matter::ProtocolError.new("Switch Binding baseline changed after direct CASE cleanup")
+        end
       end
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_BINDING_FROM_ENDPOINT_FOR_NODE,
         SdkDatastore::RemoveBindingFromEndpointForNodeRequest.new(
@@ -598,9 +624,12 @@ module SdkJfaInverseDriver
         live_binding = switch_binding_targets(im, switch_session, switch_peer).any? do |entry|
           entry.node == TEST_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT
         end
-        break if !datastore_binding && !live_binding
+        break if !datastore_binding && (verify_nonempty_fetch || !live_binding)
         if Time.instant >= binding_removal_deadline
-          raise Matter::TimeoutError.new("SDK JFA did not remove the live switch binding")
+          raise Matter::TimeoutError.new("SDK JFA Binding removal did not finish: " +
+                                         "Datastore target present=#{datastore_binding}, " +
+                                         "live target present=#{live_binding}, " +
+                                         "live targets=#{switch_binding_targets(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
       end
@@ -609,19 +638,30 @@ module SdkJfaInverseDriver
       endpoint_bindings_preserved = initial_endpoint_bindings.all? do |original|
         final_endpoint_bindings.any?(&.==(original))
       end
-      switch_bindings_preserved = initial_switch_bindings.all? do |original|
+      switch_bindings_preserved = expected_switch_bindings.all? do |original|
         final_switch_bindings.any? do |entry|
           entry.node == original.node && entry.group == original.group &&
             entry.endpoint == original.endpoint && entry.cluster == original.cluster &&
             entry.fabric_index == original.fabric_index
         end
       end
+      managed_binding_remains = final_switch_bindings.any? do |entry|
+        entry.node == TEST_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT &&
+          entry.fabric_index == switch_fabric_index
+      end
+      expected_switch_count = expected_switch_bindings.size + (verify_nonempty_fetch && managed_binding_remains ? 1 : 0)
       unless final_endpoint_bindings.size == initial_endpoint_bindings.size &&
-             final_switch_bindings.size == initial_switch_bindings.size &&
+             final_switch_bindings.size == expected_switch_count &&
              endpoint_bindings_preserved && switch_bindings_preserved
-        raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists")
+        raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists: " +
+                                        "Datastore=#{final_endpoint_bindings.inspect}, " +
+                                        "live=#{final_switch_bindings.inspect}")
       end
       puts "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry"
+      if verify_nonempty_fetch
+        puts "PASS: SDK JFA handled a nonempty Binding fetch without abort; " +
+             "managed target remains=#{managed_binding_remains}, unrelated target preserved over CASE"
+      end
 
       initial_node_acls = node_acl_list(im, session, peer)
       initial_switch_acl = switch_acl(im, switch_session, switch_peer)
