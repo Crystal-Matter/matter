@@ -7,12 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Matter 1.6 Joint Fabric SDK Binding removal interoperability
+### Matter 1.6 Joint Fabric SDK Binding fetch interoperability
 
 - Add a separate official SDK v1.6.1.0 inverse-JFA GitHub Actions lane that
-  requires RemoveBindingFromEndpointForNode to remove a managed Binding from a
-  live Crystal switch over CASE while preserving an unrelated target. Retain
-  the v1.6.0.0 smoke baseline and its documented SDK workaround.
+  keeps a managed Binding on a live Crystal switch during SDK
+  RemoveBindingFromEndpointForNode, proves the nonempty fetch no longer aborts,
+  and preserves an unrelated target. Record whether removal propagates; the
+  SDK's missing fetched NodeID and ListID still prevent that claim. Retain the
+  v1.6.0.0 smoke baseline and its documented SDK workaround.
 
 ### Matter 1.6 Thermostat suggestion following-state reconciliation
 

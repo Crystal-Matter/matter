@@ -9,10 +9,10 @@ sdk_tag="${MATTER_SDK_TAG:-v1.6.0.0}"
 
 case "${sdk_tag}" in
   v1.6.0.0)
-    export MATTER_INTEROP_REQUIRE_BINDING_REMOVAL=0
+    export MATTER_INTEROP_VERIFY_NONEMPTY_BINDING_FETCH=0
     ;;
   v1.6.1.0)
-    export MATTER_INTEROP_REQUIRE_BINDING_REMOVAL=1
+    export MATTER_INTEROP_VERIFY_NONEMPTY_BINDING_FETCH=1
     ;;
   *)
     echo "Unsupported Matter SDK tag: ${sdk_tag}" >&2

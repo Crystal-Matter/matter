@@ -573,11 +573,12 @@ module SdkJfaInverseDriver
       end
       committed_binding = binding_entry ||
                           raise Matter::ProtocolError.new("SDK JFA committed binding entry disappeared")
-      require_binding_removal = ENV["MATTER_INTEROP_REQUIRE_BINDING_REMOVAL"]? == "1"
+      verify_nonempty_fetch = ENV["MATTER_INTEROP_VERIFY_NONEMPTY_BINDING_FETCH"]? == "1"
       expected_switch_bindings = initial_switch_bindings
-      if require_binding_removal
-        # SDK 1.6.1 fixes the nonempty Binding fetch. An unrelated live target
-        # must survive SDK removal of the Datastore-managed target.
+      if verify_nonempty_fetch
+        # SDK 1.6.1 fixes the nonempty Binding fetch crash. An unrelated live
+        # target must survive the SDK removal attempt regardless of whether
+        # the SDK version propagates deletion of the managed target.
         unrelated_binding = SwitchBinding::Target.new(
           node: TEST_OTHER_BINDING_NODE_ID, endpoint: SWITCH_ENDPOINT,
           fabric_index: switch_fabric_index)
@@ -623,9 +624,12 @@ module SdkJfaInverseDriver
         live_binding = switch_binding_targets(im, switch_session, switch_peer).any? do |entry|
           entry.node == TEST_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT
         end
-        break if !datastore_binding && !live_binding
+        break if !datastore_binding && (verify_nonempty_fetch || !live_binding)
         if Time.instant >= binding_removal_deadline
-          raise Matter::TimeoutError.new("SDK JFA did not remove the live switch binding")
+          raise Matter::TimeoutError.new("SDK JFA Binding removal did not finish: " +
+                                         "Datastore target present=#{datastore_binding}, " +
+                                         "live target present=#{live_binding}, " +
+                                         "live targets=#{switch_binding_targets(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
       end
@@ -641,14 +645,22 @@ module SdkJfaInverseDriver
             entry.fabric_index == original.fabric_index
         end
       end
+      managed_binding_remains = final_switch_bindings.any? do |entry|
+        entry.node == TEST_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT &&
+          entry.fabric_index == switch_fabric_index
+      end
+      expected_switch_count = expected_switch_bindings.size + (verify_nonempty_fetch && managed_binding_remains ? 1 : 0)
       unless final_endpoint_bindings.size == initial_endpoint_bindings.size &&
-             final_switch_bindings.size == expected_switch_bindings.size &&
+             final_switch_bindings.size == expected_switch_count &&
              endpoint_bindings_preserved && switch_bindings_preserved
-        raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists")
+        raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists: " +
+                                        "Datastore=#{final_endpoint_bindings.inspect}, " +
+                                        "live=#{final_switch_bindings.inspect}")
       end
       puts "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry"
-      if require_binding_removal
-        puts "PASS: SDK JFA removed the live switch Binding and preserved an unrelated target over CASE"
+      if verify_nonempty_fetch
+        puts "PASS: SDK JFA handled a nonempty Binding fetch without abort; " +
+             "managed target remains=#{managed_binding_remains}, unrelated target preserved over CASE"
       end
 
       initial_node_acls = node_acl_list(im, session, peer)
