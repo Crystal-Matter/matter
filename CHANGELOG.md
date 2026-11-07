@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion following-state reconciliation
+
+- Keep a guarded profile's effective suggestion selected when a later setpoint
+  limit makes its referenced preset temporarily inapplicable. Report a non-null
+  zero not-following reason until the limit permits the preset again, and
+  re-evaluate direct preset and setpoint changes immediately. Production
+  TSUGGEST remains gated.
+
 ### Matter 1.6 Ambient Context Sensing sound prediction profile
 
 - Add opt-in AUD+PRED with sound-tag-validated, atomic future forecasts and

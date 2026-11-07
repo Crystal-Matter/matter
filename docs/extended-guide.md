@@ -779,8 +779,15 @@ recovery. A separate guarded MSCH+OCC fixture checks the arbitration policy:
 an active schedule controls its preset and sets the Schedule not-following bit
 when that preset differs from the current suggestion; a later matching
 transition clears the bit. Occupancy changes reapply the controlling preset to
-the newly active setpoint bank. Production TSUGGEST remains gated until this
-combined profile is verified on the normal class with official chip-tool.
+the newly active setpoint bank. If a setpoint limit temporarily makes a
+suggested preset inapplicable, the current suggestion remains selected with a
+non-null zero not-following reason. Relaxing that limit resumes following;
+direct preset and setpoint changes also trigger immediate re-evaluation.
+In this guarded policy, a direct preset or setpoint change without a hold is
+immediately superseded by the selected suggestion; an indefinite setpoint hold
+retains the manual choice and reports the OngoingHold reason until released.
+Production TSUGGEST remains gated until the normal class and its time source
+are verified with official chip-tool.
 
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset

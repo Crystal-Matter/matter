@@ -238,13 +238,43 @@ describe "Thermostat guarded suggestion wire" do
     read_tlv(cluster, 0x54_u32).as_list.size.should eq(5)
   end
 
-  it "does not report a failed preset activation as a followed current suggestion" do
+  it "retains a selected suggestion with a zero not-following reason until its preset becomes valid again" do
     cluster = ready_suggestion_thermostat
     suggestion_im_invoke(cluster, 0x07_u32,
       SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_000_u32, 30_u16))
     read_tlv(cluster, 0x55_u32).should_not be_nil
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) : Nil {
+      changed << attribute
+      nil
+    }
     cluster.min_heat_setpoint_limit = 2_000_i16
-    read(cluster, 0x55_u32).should be_nil
+    changed.should contain(0x56_u32)
+    current = SuggestWire::ThermostatSuggestion.from_tlv(read_tlv(cluster, 0x55_u32))
+    current.preset_handle.should eq(Bytes[1_u8])
+    read(cluster, 0x56_u32).should eq(0_u16)
+    cluster.active_preset_handle.should be_nil
+
+    cluster.min_heat_setpoint_limit = 1_700_i16
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    cluster.occupied_heating_setpoint.should eq(1_900_i16)
+    read(cluster, 0x56_u32).should be_nil
+  end
+
+  it "re-evaluates a current suggestion immediately after direct preset and setpoint changes" do
+    cluster = ready_suggestion_thermostat
+    suggestion_im_invoke(cluster, 0x07_u32,
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_000_u32, 30_u16))
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+
+    cluster.activate_preset(SuggestWire::SetActivePresetRequest.new(Bytes[2_u8]))
+      .status.should eq(SuggestCode::Success)
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    cluster.occupied_heating_setpoint.should eq(1_900_i16)
+
+    cluster.occupied_heating_setpoint = 2_000_i16
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    cluster.occupied_heating_setpoint.should eq(1_900_i16)
     read(cluster, 0x56_u32).should be_nil
   end
 
