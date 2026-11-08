@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff standalone FriendlyCredit
+
+- Publish a FriendlyCredit-only tariff with Currency and component Price absent
+  from the wire, and a present nullable TariffUnit. Validate feature-specific
+  fields before publication and preserve the calendar, projections, and lookup
+  responses across restart. Exercise the profile with official chip-tool E2E.
+
 ### Matter 1.6 Thermostat Suggestions production UTC source
 
 - Enable normal Thermostat TSUGGEST only when constructed with an explicit

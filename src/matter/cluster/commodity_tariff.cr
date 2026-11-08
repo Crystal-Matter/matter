@@ -94,7 +94,7 @@ module Matter
         @[TLV::Field(tag: 1, optional: false)]
         getter provider_name : String?
 
-        @[TLV::Field(tag: 2, optional: false)]
+        @[TLV::Field(tag: 2, optional: true)]
         getter currency : Currency?
 
         @[TLV::Field(tag: 3, optional: false)]
@@ -375,7 +375,7 @@ module Matter
       # before any visible attribute changes.
       struct Publication
         getter info : TariffInformation
-        getter unit : TariffUnit
+        getter unit : TariffUnit?
         getter start_date : UInt32?
         getter day_entries : Array(DayEntry)
         getter day_patterns : Array(DayPattern)
@@ -384,7 +384,7 @@ module Matter
         getter components : Array(TariffComponent)
         getter tariff_periods : Array(TariffPeriod)
 
-        def initialize(@info : TariffInformation, @unit : TariffUnit,
+        def initialize(@info : TariffInformation, @unit : TariffUnit?,
                        @start_date : UInt32?, @day_entries : Array(DayEntry),
                        @day_patterns : Array(DayPattern),
                        @calendar_periods : Array(CalendarPeriod),
@@ -440,12 +440,13 @@ module Matter
                      @tariff_periods : Array(TariffPeriod) = [] of TariffPeriod)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         unless @feature_map == Feature::Pricing ||
+               @feature_map == Feature::FriendlyCredit ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit) ||
                @feature_map == (Feature::Pricing | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad) ||
                @feature_map == (Feature::Pricing | Feature::PowerThreshold)
-          raise ArgumentError.new("only Pricing, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
+          raise ArgumentError.new("only Pricing, FriendlyCredit, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
         end
       end
 
@@ -589,9 +590,12 @@ module Matter
         [info.tariff_label, info.provider_name].each do |label|
           raise ArgumentError.new("tariff label exceeds 128 bytes") if label && label.bytesize > MAX_LABEL_BYTES
         end
-        currency = info.currency
-        raise ArgumentError.new("pricing requires currency") unless currency
-        raise ArgumentError.new("currency code exceeds 999") if currency.currency > DataType::Currency::MAX_CODE
+        if @feature_map.pricing?
+          currency = info.currency || raise ArgumentError.new("Pricing requires Currency")
+          raise ArgumentError.new("currency code exceeds 999") if currency.currency > DataType::Currency::MAX_CODE
+        elsif info.currency
+          raise ArgumentError.new("Currency requires Pricing")
+        end
         raise ArgumentError.new("calendar is empty") if publication.day_entries.empty? || publication.day_patterns.empty?
         check_size!("day entries", publication.day_entries.size, 1, MAX_DAY_ENTRIES)
         check_size!("day patterns", publication.day_patterns.size, 1, MAX_DAY_PATTERNS)
@@ -644,6 +648,9 @@ module Matter
         days = publication.individual_days.map(&.date)
         raise ArgumentError.new("individual days must be sorted and unique") unless days == days.sort.uniq!
         publication.components.each do |component|
+          if !@feature_map.pricing? && component.price
+            raise ArgumentError.new("Price requires Pricing")
+          end
           if price = component.price
             if price.price.nil? && price.price_level.nil?
               raise ArgumentError.new("price or price level is required")
