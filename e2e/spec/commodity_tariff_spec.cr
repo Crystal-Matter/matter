@@ -47,10 +47,16 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
   end
 
   it "projects FriendlyCredit entry and exit on an opt-in endpoint and retains the published tariff" do
-    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(3_i64)
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(2_i64)
+    info = expect_success(device.read(TARIFF_CLUSTER, "tariff-info", FRIENDLY_CREDIT_ENDPOINT)).output
+    info.should contain("Friendly credit")
+    info.should_not contain("Currency")
+    expect_success(device.read(TARIFF_CLUSTER, "tariff-unit", FRIENDLY_CREDIT_ENDPOINT))
+      .output.downcase.should contain("null")
     refresh_tariffs(100_u32)
-    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
-      .bool("FriendlyCredit").should be_true
+    current = expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
+    current.bool("FriendlyCredit").should be_true
+    current.output.should_not contain("Price")
     expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
       .bool("FriendlyCredit").should be_false
     entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
@@ -60,7 +66,9 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
     expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
       .bool("FriendlyCredit").should be_false
     device.restart!
-    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(3_i64)
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(2_i64)
+    expect_success(device.read(TARIFF_CLUSTER, "tariff-info", FRIENDLY_CREDIT_ENDPOINT))
+      .output.should_not contain("Currency")
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
       endpoint: FRIENDLY_CREDIT_ENDPOINT)).bool("FriendlyCredit").should be_true
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],

@@ -27,7 +27,7 @@ module MatterCommodityTariff
     end
 
     endpoint 2, device_type: Matter::DeviceType::AGGREGATOR do
-      cluster Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::FriendlyCredit,
+      cluster Tariff, feature_map: Tariff::Feature::FriendlyCredit,
         as: :friendly_credit_tariff
     end
 
@@ -62,22 +62,21 @@ module MatterCommodityTariff
       end
       unless friendly_credit_tariff.tariff_info
         info = Tariff::TariffInformation.new("Friendly credit", "Crystal Utility",
-          Tariff::Currency.new(36_u16, 2_u8), Tariff::BlockMode::NoBlock)
+          nil, Tariff::BlockMode::NoBlock)
         entries = [Tariff::DayEntry.new(1_u32, 0_u16), Tariff::DayEntry.new(2_u32, 720_u16)]
         pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
         calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
         components = [
           Tariff::TariffComponent.new(1_u32, nil, nil,
             "Friendly entry", friendly_credit: true),
-          Tariff::TariffComponent.new(2_u32,
-            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 25_i64), nil,
+          Tariff::TariffComponent.new(2_u32, nil, nil,
             "Friendly exit", friendly_credit: false),
         ]
         periods = [
           Tariff::TariffPeriod.new("Friendly entry", [1_u32], [1_u32]),
           Tariff::TariffPeriod.new("Friendly exit", [2_u32], [2_u32]),
         ]
-        friendly_credit_tariff.publish(Tariff::Publication.new(info, Tariff::TariffUnit::KWh,
+        friendly_credit_tariff.publish(Tariff::Publication.new(info, nil,
           0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
           components, periods), at: 100_u32)
       end

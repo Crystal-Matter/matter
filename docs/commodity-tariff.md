@@ -1,7 +1,8 @@
 # Commodity Tariff (Matter 1.6)
 
-`Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with the
-Pricing feature and opt-in FriendlyCredit, PeakPeriod, AuxiliaryLoad, and PowerThreshold profiles. A host publishes
+`Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with
+Pricing, standalone FriendlyCredit, and supported combinations of Pricing with
+FriendlyCredit, PeakPeriod, AuxiliaryLoad, or PowerThreshold. A host publishes
 a validated calendar with `publish`, then
 calls `refresh_at` with Matter epoch seconds as its clock advances. The server
 exposes all mandatory base attributes, including current and next day/entry
@@ -25,8 +26,12 @@ scheduler that refreshes at the appropriate transitions. Randomized day
 entries are not supported. The FriendlyCredit profile carries an optional
 boolean in each tariff component: `true` marks entry to a friendly credit
 period and `false` marks exit. Current and next component projections, lookup
-responses, and restored publications preserve that value. Pricing-only servers
-reject components with a FriendlyCredit value. The host publishes the schedule;
+responses, and restored publications preserve that value. A standalone
+FriendlyCredit server omits Currency from TariffInfo and Price from its
+components; TariffUnit remains present and may be null. Publications without
+Pricing reject Currency and Price, while Pricing requires Currency. Pricing-only
+servers reject components with a FriendlyCredit value. The host publishes the
+schedule;
 a meter or application owns credit accounting and supply control.
 The PeakPeriod profile carries an optional `PeakPeriod` structure in each
 component, with `severity` (`Unused`, `Low`, `Medium`, `High`) and a positive
@@ -50,6 +55,7 @@ The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
-Pricing tariff and separate FriendlyCredit, PeakPeriod, AuxiliaryLoad, and PowerThreshold profiles on Aggregator
-endpoints. The official chip-tool E2E exercises all profiles and host-driven
+Pricing tariff and separate standalone FriendlyCredit, PeakPeriod, AuxiliaryLoad,
+and PowerThreshold profiles on Aggregator endpoints. The official chip-tool E2E
+exercises all profiles and host-driven
 transitions.
