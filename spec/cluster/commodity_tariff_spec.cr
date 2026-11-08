@@ -26,6 +26,32 @@ private def tariff_publication
 end
 
 describe Tariff do
+  it "publishes a FriendlyCredit-only calendar without Currency or Price" do
+    cluster = build(Tariff, feature_map: Tariff::Feature::FriendlyCredit)
+    baseline = tariff_publication
+    info = Tariff::TariffInformation.new("Friendly credit", "Supplier", nil, Tariff::BlockMode::NoBlock)
+    components = [
+      Tariff::TariffComponent.new(30_u32, nil, nil, friendly_credit: true),
+      Tariff::TariffComponent.new(31_u32, nil, nil, friendly_credit: false),
+    ]
+    publication = Tariff::Publication.new(info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, components, baseline.tariff_periods)
+    cluster.publish(publication, at: 100_u32)
+    read(cluster, Tariff::GLOBAL_FEATURE_MAP).should eq(Tariff::Feature::FriendlyCredit.value)
+    read_tlv(cluster, Tariff::ATTR_TARIFF_INFO).as_structure.has_key?(2_u8).should be_false
+    read_tlv(cluster, Tariff::ATTR_TARIFF_UNIT).value.should eq(Tariff::TariffUnit::KWh.value)
+    current = read_tlv(cluster, Tariff::ATTR_CURRENT_TARIFF_COMPONENTS).as_list.first.as_structure
+    current.has_key?(1_u8).should be_false
+    current[2_u8].as_bool.should be_true
+    cluster.refresh_at(43_200_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
+    restored = build(Tariff, feature_map: Tariff::Feature::FriendlyCredit)
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(43_200_u32)
+    restored.current_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
+  end
+
   it "projects and persists opt-in power thresholds with nullable source" do
     feature_map = Tariff::Feature::Pricing | Tariff::Feature::PowerThreshold
     cluster = build(Tariff, feature_map: feature_map)
