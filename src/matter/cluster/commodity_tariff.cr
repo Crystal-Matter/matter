@@ -441,12 +441,13 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         unless @feature_map == Feature::Pricing ||
                @feature_map == Feature::FriendlyCredit ||
+               @feature_map == Feature::AuxiliaryLoad ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit) ||
                @feature_map == (Feature::Pricing | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad) ||
                @feature_map == (Feature::Pricing | Feature::PowerThreshold)
-          raise ArgumentError.new("only Pricing, FriendlyCredit, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
+          raise ArgumentError.new("only Pricing, FriendlyCredit, AuxiliaryLoad, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
         end
       end
 

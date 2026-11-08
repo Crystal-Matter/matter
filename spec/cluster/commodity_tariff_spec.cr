@@ -208,7 +208,6 @@ describe Tariff do
     expect_raises(ArgumentError, /AuxiliaryLoad/) { pricing.publish(publication, at: 100_u32) }
     pricing.publish(baseline, at: 100_u32)
     read_tlv(pricing, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure.has_key?(3_u8).should be_false
-    expect_raises(ArgumentError, /Pricing/) { build(Tariff, feature_map: Tariff::Feature::AuxiliaryLoad) }
   end
 
   it "projects and persists opt-in peak periods without changing Pricing or FriendlyCredit" do
