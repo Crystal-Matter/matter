@@ -90,6 +90,19 @@ private def suggestion_im_status(response : Matter::InteractionModel::InvokeResp
 end
 
 describe "Thermostat guarded suggestion wire" do
+  it "enables the normal Thermostat class with an explicit UTC source" do
+    cluster = build(SuggestWire, feature_map: suggestion_features,
+      preset_types: [SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8)],
+      presets: [SuggestWire::Preset.new(Bytes[1_u8], SuggestWire::PresetScenario::Sleep,
+        nil, nil, 1900_i16, false)],
+      utc_time_provider: -> : UInt32? { 1_000_u32 })
+    cluster.get_attribute_metadata(SuggestWire::ATTR_MAX_THERMOSTAT_SUGGESTIONS).should_not be_nil
+    cluster.get_command_metadata(SuggestWire::CMD_ADD_THERMOSTAT_SUGGESTION).should_not be_nil
+    added = suggestion_im_invoke(cluster, SuggestWire::CMD_ADD_THERMOSTAT_SUGGESTION,
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_000_u32, 30_u16))
+    added.command_data.should_not be_nil
+  end
+
   it "keeps the selected suggestion visible while a schedule controls a different preset, then follows a matching transition" do
     local = Time.utc(2026, 10, 26, 7, 59)
     cluster = scheduled_suggestion_thermostat(-> : Time? { local })
