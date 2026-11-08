@@ -20,7 +20,7 @@ private def suggestion_id(result : E2E::Result) : String
   value.split(/\s+/).first
 end
 
-describe "Matter Thermostat Suggestions guarded fixture" do
+describe "Matter Thermostat Suggestions normal-class fixture" do
   device = E2E::Device["matter_thermostat_suggestions"]
 
   it "commissions and exposes TSUGGEST metadata and an empty list" do

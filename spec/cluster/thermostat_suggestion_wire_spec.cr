@@ -3,31 +3,13 @@ require "../spec_helper"
 private alias SuggestWire = Matter::Cluster::Thermostat
 private alias SuggestCode = Matter::InteractionModel::StatusCode
 
-private class ReadySuggestionThermostat < SuggestWire
-  protected def preset_wire_ready? : Bool
-    true
-  end
-
-  protected def preset_wire_ready?(command_id : UInt32) : Bool
-    true
-  end
-
-  protected def suggestion_wire_ready? : Bool
-    true
-  end
-
-  protected def suggestion_wire_ready?(command_id : UInt32) : Bool
-    true
-  end
-end
-
 private def suggestion_features : SuggestWire::Feature
   SuggestWire::Feature::Heating | SuggestWire::Feature::Presets |
     SuggestWire::Feature::ThermostatSuggestions
 end
 
 private def ready_suggestion_thermostat(clock : Proc(UInt32?) = -> : UInt32? { 1_000_u32 },
-                                        scheduler : Proc(Time::Span, Proc(Nil), Proc(Nil))? = nil) : ReadySuggestionThermostat
+                                        scheduler : Proc(Time::Span, Proc(Nil), Proc(Nil))? = nil) : SuggestWire
   scheduler ||= ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
     cancel = Channel(Nil).new
     spawn do
@@ -39,19 +21,17 @@ private def ready_suggestion_thermostat(clock : Proc(UInt32?) = -> : UInt32? { 1
     end
     -> : Nil { cancel.close unless cancel.closed? }
   }
-  cluster = build(ReadySuggestionThermostat, feature_map: suggestion_features,
-    utc_time_provider: clock, suggestion_timer_scheduler: scheduler)
-  cluster.configure_presets([
-    SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8),
-    SuggestWire::PresetType.new(SuggestWire::PresetScenario::Wake, 1_u8),
-  ], [
+  build(SuggestWire, feature_map: suggestion_features,
+    preset_types: [
+      SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8),
+      SuggestWire::PresetType.new(SuggestWire::PresetScenario::Wake, 1_u8),
+    ], presets: [
     SuggestWire::Preset.new(Bytes[1_u8], SuggestWire::PresetScenario::Sleep, nil, nil, 1900_i16, false),
     SuggestWire::Preset.new(Bytes[2_u8], SuggestWire::PresetScenario::Wake, nil, nil, 2100_i16, false),
-  ])
-  cluster
+  ], utc_time_provider: clock, suggestion_timer_scheduler: scheduler)
 end
 
-private def scheduled_suggestion_thermostat(local_clock : Proc(Time?)) : ReadySuggestionThermostat
+private def scheduled_suggestion_thermostat(local_clock : Proc(Time?)) : SuggestWire
   presets = [
     SuggestWire::Preset.new(Bytes[1_u8], SuggestWire::PresetScenario::Sleep, nil, nil, 1900_i16, false),
     SuggestWire::Preset.new(Bytes[2_u8], SuggestWire::PresetScenario::Wake, nil, nil, 2100_i16, false),
@@ -62,7 +42,7 @@ private def scheduled_suggestion_thermostat(local_clock : Proc(Time?)) : ReadySu
   ]
   schedule = SuggestWire::Schedule.new(Bytes[3_u8], SuggestWire::SystemMode::Heat,
     nil, nil, transitions, false)
-  build(ReadySuggestionThermostat,
+  build(SuggestWire,
     feature_map: suggestion_features | SuggestWire::Feature::MatterSchedules | SuggestWire::Feature::Occupancy,
     preset_types: [
       SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8),
@@ -89,7 +69,18 @@ private def suggestion_im_status(response : Matter::InteractionModel::InvokeResp
   SuggestCode.new(status.status.status)
 end
 
-describe "Thermostat guarded suggestion wire" do
+describe "Thermostat suggestion wire" do
+  it "rejects a missing or ambiguous UTC source on the normal class" do
+    preset_types = [SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8)]
+    expect_raises(ArgumentError, /TSUGGEST requires an explicit UTC source/) do
+      build(SuggestWire, feature_map: suggestion_features, preset_types: preset_types)
+    end
+    expect_raises(ArgumentError, /choose one suggestion UTC source/) do
+      build(SuggestWire, feature_map: suggestion_features, preset_types: preset_types,
+        utc_time_provider: -> : UInt32? { nil }, use_root_utc_time: true)
+    end
+  end
+
   it "enables the normal Thermostat class with an explicit UTC source" do
     cluster = build(SuggestWire, feature_map: suggestion_features,
       preset_types: [SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8)],

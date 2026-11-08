@@ -722,6 +722,7 @@ module Matter
                      schedule_max_per_day : UInt8? = nil,
                      local_time_provider : Proc(Time?)? = nil,
                      utc_time_provider : Proc(UInt32?)? = nil,
+                     use_root_utc_time : Bool = false,
                      @max_thermostat_suggestions : UInt8 = MIN_SUGGESTION_CAPACITY,
                      @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Proc(Nil)) = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
                        cancel = ::Channel(Nil).new
@@ -738,6 +739,8 @@ module Matter
 
         @schedule_clock_configured = !local_time_provider.nil?
         @local_time_provider = local_time_provider || -> : Time? { nil }
+        raise ArgumentError.new("choose one suggestion UTC source") if use_root_utc_time && utc_time_provider
+        @suggestion_root_utc_requested = use_root_utc_time
         @suggestion_clock_configured = !utc_time_provider.nil?
         @utc_time_provider = utc_time_provider || -> : UInt32? { nil }
         if @feature_map.automode? && !(@feature_map.heating? && @feature_map.cooling?)
@@ -785,7 +788,7 @@ module Matter
           raise ArgumentError.new("MSCH requires a host local civil clock")
         end
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
-        raise ArgumentError.new("TSUGGEST wire conformance is not yet enabled") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
+        raise ArgumentError.new("TSUGGEST requires an explicit UTC source") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
         validate_occupancy(@occupancy)
 
         if @feature_map.heating?
@@ -981,12 +984,15 @@ module Matter
         @max_thermostat_suggestions
       end
 
-      # The device runtime supplies the root Time Synchronization clock when
-      # the host did not explicitly provide a synchronized UTC source.
+      # The device runtime supplies the selected root Time Synchronization clock.
       def bind_suggestion_utc_provider(provider : Proc(UInt32?)) : Nil
         return if @suggestion_clock_configured
         @utc_time_provider = provider
         @suggestion_clock_configured = true
+      end
+
+      def suggestion_root_utc_requested? : Bool
+        @suggestion_root_utc_requested
       end
 
       def suggestion_polling_enabled? : Bool
@@ -1027,7 +1033,7 @@ module Matter
       end
 
       protected def suggestion_wire_ready? : Bool
-        false
+        @suggestion_clock_configured || @suggestion_root_utc_requested
       end
 
       protected def suggestion_wire_ready?(command_id : UInt32) : Bool

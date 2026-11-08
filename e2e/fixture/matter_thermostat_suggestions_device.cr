@@ -1,27 +1,9 @@
 require "../../examples/support/console"
 require "../../examples/support/main"
 
-# Certification fixture only. Production PRES and TSUGGEST remain gated.
+# Official chip-tool fixture for the normal Thermostat TSUGGEST profile.
 module MatterThermostatSuggestionsFixture
   alias Thermostat = Matter::Cluster::Thermostat
-
-  class WireThermostat < Thermostat
-    protected def preset_wire_ready? : Bool
-      true
-    end
-
-    protected def preset_wire_ready?(command_id : UInt32) : Bool
-      true
-    end
-
-    protected def suggestion_wire_ready? : Bool
-      true
-    end
-
-    protected def suggestion_wire_ready?(command_id : UInt32) : Bool
-      true
-    end
-  end
 
   class Device < Matter::Device
     include Examples::Console
@@ -42,9 +24,10 @@ module MatterThermostatSuggestionsFixture
     endpoint 1, device_type: Matter::DeviceType::THERMOSTAT do
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::Groups
-      cluster WireThermostat,
+      cluster Thermostat,
         feature_map: Thermostat::Feature::Heating | Thermostat::Feature::Cooling |
                      Thermostat::Feature::Presets | Thermostat::Feature::ThermostatSuggestions,
+        use_root_utc_time: true,
         preset_types: [
           Thermostat::PresetType.new(Thermostat::PresetScenario::Sleep, 1_u8),
           Thermostat::PresetType.new(Thermostat::PresetScenario::Wake, 1_u8),

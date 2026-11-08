@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat Suggestions production UTC source
+
+- Enable normal Thermostat TSUGGEST only when constructed with an explicit
+  synchronized UTC provider or `use_root_utc_time: true`. Root mode requires a
+  root Time Synchronization cluster; unsynchronized UTC still rejects Add with
+  InvalidInState. The runtime preserves an explicit host provider.
+- Exercise normal-class TSUGGEST through the official chip-tool suggestion and
+  arbitration fixtures, including UTC failure and recovery.
+
 ### Matter 1.6 Thermostat suggestion Add status precedence
 
 - Check the current suggestion capacity before rejecting an EffectiveTime more
