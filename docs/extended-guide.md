@@ -770,12 +770,12 @@ With LTNE enabled, `update_local_temperature` feeds the internal measurement
 used by Auto mode while LocalTemperature always reads as TLV null. A direct
 `local_temperature=` call cannot expose a value on an LTNE thermostat. See the
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
-The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; TSUGGEST remains unavailable in production.
+The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations. TSUGGEST is available when Presets is configured and the host explicitly supplies `utc_time_provider` or selects `use_root_utc_time: true` with a root Time Synchronization cluster.
 
-The guarded TSUGGEST fixture keeps its suggestion queue when synchronized UTC
+The TSUGGEST fixture keeps its suggestion queue when synchronized UTC
 becomes unavailable, but clears `CurrentThermostatSuggestion` and its reason
 until time returns. The fixture's chip-tool test checks restart and time
-recovery. A separate guarded MSCH+OCC fixture checks the arbitration policy:
+recovery. A separate MSCH+OCC fixture checks the arbitration policy:
 an active schedule controls its preset and sets the Schedule not-following bit
 when that preset differs from the current suggestion; a later matching
 transition clears the bit. Occupancy changes reapply the controlling preset to
@@ -783,17 +783,22 @@ the newly active setpoint bank. If a setpoint limit temporarily makes a
 suggested preset inapplicable, the current suggestion remains selected with a
 non-null zero not-following reason. Relaxing that limit resumes following;
 direct preset and setpoint changes also trigger immediate re-evaluation.
-In this guarded policy, a direct preset or setpoint change without a hold is
+In this policy, a direct preset or setpoint change without a hold is
 immediately superseded by the selected suggestion; an indefinite setpoint hold
 retains the manual choice and reports the OngoingHold reason until released.
-Production TSUGGEST remains gated until the normal class and its time source
-are verified with official chip-tool.
-The guarded profile cancels its pending boundary timer when a suggestion is
+Normal-class TSUGGEST uses the host's synchronized UTC provider directly or
+binds the selected root Time Synchronization clock before device exposure.
+Root mode fails device construction when the root cluster is absent. If UTC is
+not synchronized, AddThermostatSuggestion returns InvalidInState and the
+suggestion queue remains stored until time recovers. The source is a trusted
+host configuration, not a value supplied by a controller. The official
+chip-tool suggestion and arbitration fixtures exercise the normal class.
+The TSUGGEST profile cancels its pending boundary timer when a suggestion is
 removed, synchronized UTC is lost, or state is restored. A UTC change rearms
 the same future boundary using the new time, so an old sleeping timer cannot
 delay a suggestion after a clock jump. The default scheduler releases its
 cancelled fiber; injected schedulers return a cancellation callback.
-Guarded AddThermostatSuggestion validates synchronized time, a known preset,
+AddThermostatSuggestion validates synchronized time, a known preset,
 the capacity after pruning expired entries, and then the future EffectiveTime
 window. A full list therefore reports ResourceExhausted even when the proposed
 time is more than 24 hours ahead.

@@ -7,24 +7,12 @@ require "../../src/matter/cluster/groups"
 
 private alias SuggestionTimeSync = Matter::Cluster::TimeSynchronization
 
-private class TimeSyncSuggestionThermostat < Matter::Cluster::Thermostat
-  protected def preset_wire_ready? : Bool
-    true
-  end
-
-  protected def suggestion_wire_ready? : Bool
-    true
-  end
-
-  protected def suggestion_wire_ready?(command_id : UInt32) : Bool
-    true
-  end
-end
+private alias TimeSyncSuggestionThermostat = Matter::Cluster::Thermostat
 
 private class TimeSyncSuggestionDevice < Matter::Device
   @thermostat : TimeSyncSuggestionThermostat? = nil
 
-  def initialize
+  def initialize(@use_root_utc_time : Bool = true, @include_time_sync : Bool = true)
     super(Matter::Storage::Memory.new, port: 0,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)])
   end
@@ -64,15 +52,19 @@ private class TimeSyncSuggestionDevice < Matter::Device
   protected def device_clusters : Array(Matter::Cluster::Base)
     endpoint_number = endpoint(1_u16)
     @thermostat = TimeSyncSuggestionThermostat.new(endpoint_number,
+      use_root_utc_time: @use_root_utc_time,
+      utc_time_provider: @use_root_utc_time ? nil : -> : UInt32? { 1_000_u32 },
       feature_map: TimeSyncSuggestionThermostat::Feature::Heating |
                    TimeSyncSuggestionThermostat::Feature::Presets |
                    TimeSyncSuggestionThermostat::Feature::ThermostatSuggestions,
       preset_types: [TimeSyncSuggestionThermostat::PresetType.new(TimeSyncSuggestionThermostat::PresetScenario::Sleep, 1_u8)],
       presets: [TimeSyncSuggestionThermostat::Preset.new(Bytes[1_u8], TimeSyncSuggestionThermostat::PresetScenario::Sleep,
         nil, nil, 1900_i16, false)])
-    [SuggestionTimeSync.new, thermostat,
-     Matter::Cluster::Identify.new(endpoint_number),
-     Matter::Cluster::Groups.new(endpoint_number)] of Matter::Cluster::Base
+    clusters = [thermostat,
+                Matter::Cluster::Identify.new(endpoint_number),
+                Matter::Cluster::Groups.new(endpoint_number)] of Matter::Cluster::Base
+    clusters << SuggestionTimeSync.new if @include_time_sync
+    clusters
   end
 
   protected def endpoint_device_types : Hash(UInt16, UInt32)
@@ -81,6 +73,26 @@ private class TimeSyncSuggestionDevice < Matter::Device
 end
 
 describe "Thermostat suggestion root UTC integration" do
+  it "requires root Time Synchronization when selected" do
+    require_udp_sockets!
+    expect_raises(Matter::ConfigurationError, /root Time Synchronization/) do
+      TimeSyncSuggestionDevice.new(include_time_sync: false)
+    end
+  end
+
+  it "preserves an explicit host UTC provider when root Time Synchronization exists" do
+    require_udp_sockets!
+    device = TimeSyncSuggestionDevice.new(use_root_utc_time: false)
+    device.time_sync.apply_utc_time(SuggestionTimeSync::SetUtcTimeRequest.new(2_000_000_000_u64,
+      SuggestionTimeSync::Granularity::Seconds)).status.should eq(Matter::InteractionModel::StatusCode::Success)
+    request = TimeSyncSuggestionThermostat::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_030_u32, 30_u16)
+    device.thermostat.invoke_command(TimeSyncSuggestionThermostat::CMD_ADD_THERMOSTAT_SUGGESTION,
+      request.to_tlv(nil), is_case_session: true).should be_a(Matter::Cluster::CommandResponse)
+    device.thermostat.thermostat_suggestions.size.should eq(1)
+  ensure
+    device.try(&.shutdown!)
+  end
+
   it "rejects unsynchronized Add, follows and expires from root UTC without reads, and rejects after time failure" do
     require_udp_sockets!
     device = TimeSyncSuggestionDevice.new

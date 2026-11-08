@@ -1485,7 +1485,9 @@ module Matter
 
     private def wire_thermostat_utc(cluster : Cluster::Base) : Nil
       thermostat = cluster.as?(Cluster::Thermostat) || return
-      time_sync = @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization) || return
+      return unless thermostat.suggestion_root_utc_requested?
+      time_sync = @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization) ||
+                  raise ConfigurationError.new("Thermostat root UTC source requires root Time Synchronization")
       thermostat.bind_suggestion_utc_provider(-> : UInt32? { time_sync.matter_epoch_seconds })
     end
 

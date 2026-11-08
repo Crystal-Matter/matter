@@ -1,7 +1,7 @@
 require "../../examples/support/console"
 require "../../examples/support/main"
 
-# Certification fixture only. Production TSUGGEST remains gated.
+# Official chip-tool fixture for the normal Thermostat TSUGGEST profile.
 module MatterThermostatSuggestionArbitrationFixture
   alias Thermostat = Matter::Cluster::Thermostat
 
@@ -30,15 +30,8 @@ module MatterThermostatSuggestionArbitrationFixture
         ], presets: presets,
         schedule_types: [ScheduleType.new(SystemMode::Heat, 1_u8, ScheduleTypeFeatures::SupportsPresets)],
         schedules: [schedule], schedule_max_transitions: 2_u8, schedule_max_per_day: 2_u8,
-        local_time_provider: -> : Time? { WireThermostat.local_time })
-    end
-
-    protected def suggestion_wire_ready? : Bool
-      true
-    end
-
-    protected def suggestion_wire_ready?(command_id : UInt32) : Bool
-      true
+        local_time_provider: -> : Time? { WireThermostat.local_time },
+        use_root_utc_time: true)
     end
   end
 
