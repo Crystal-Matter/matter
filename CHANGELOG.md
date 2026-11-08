@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff standalone AuxiliaryLoad
+
+- Publish an AuxiliaryLoad-only tariff with Currency and component Price absent
+  from the wire, and a present nullable TariffUnit. Preserve switch state
+  transitions, lookup responses, and the calendar across restart. Exercise the
+  profile with official chip-tool E2E.
+
 ### Matter 1.6 Commodity Tariff standalone FriendlyCredit
 
 - Publish a FriendlyCredit-only tariff with Currency and component Price absent

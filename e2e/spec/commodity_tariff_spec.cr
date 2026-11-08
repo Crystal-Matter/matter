@@ -99,22 +99,34 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
   end
 
   it "projects an auxiliary switch setting through reads, lookup, and restart" do
-    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", AUXILIARY_LOAD_ENDPOINT).should eq(5_i64)
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", AUXILIARY_LOAD_ENDPOINT).should eq(4_i64)
+    info = expect_success(device.read(TARIFF_CLUSTER, "tariff-info", AUXILIARY_LOAD_ENDPOINT)).output
+    info.should contain("Auxiliary load")
+    info.should_not contain("Currency")
+    expect_success(device.read(TARIFF_CLUSTER, "tariff-unit", AUXILIARY_LOAD_ENDPOINT))
+      .output.downcase.should contain("null")
     refresh_tariffs(100_u32)
     current = expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", AUXILIARY_LOAD_ENDPOINT))
     current.int("Number").should eq(1_i64)
     current.int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::On.value.to_i64)
+    current.output.should_not contain("Price")
     next_components = expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", AUXILIARY_LOAD_ENDPOINT))
     next_components.int("Number").should eq(1_i64)
     next_components.int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::Off.value.to_i64)
+    next_components.output.should_not contain("Price")
     entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
       endpoint: AUXILIARY_LOAD_ENDPOINT))
     entry.int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::On.value.to_i64)
+    entry.output.should_not contain("Price")
     refresh_tariffs(43_200_u32)
     expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", AUXILIARY_LOAD_ENDPOINT))
       .int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::Off.value.to_i64)
     device.restart!
-    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", AUXILIARY_LOAD_ENDPOINT).should eq(5_i64)
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", AUXILIARY_LOAD_ENDPOINT).should eq(4_i64)
+    expect_success(device.read(TARIFF_CLUSTER, "tariff-info", AUXILIARY_LOAD_ENDPOINT))
+      .output.should_not contain("Currency")
+    expect_success(device.read(TARIFF_CLUSTER, "tariff-unit", AUXILIARY_LOAD_ENDPOINT))
+      .output.downcase.should contain("null")
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
       endpoint: AUXILIARY_LOAD_ENDPOINT)).int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::On.value.to_i64)
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
