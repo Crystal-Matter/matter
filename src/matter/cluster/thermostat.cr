@@ -1050,12 +1050,12 @@ module Matter
                                     now_epoch : UInt32?) : AddThermostatSuggestionResponse | InteractionModel::Status
         now = now_epoch || return InteractionModel::Status.invalid_in_state
         return InteractionModel::Status.not_found unless @presets.any? { |preset| preset.preset_handle == request.preset_handle }
+        tick_suggestions(now)
+        return InteractionModel::Status.resource_exhausted if @thermostat_suggestions.size >= @max_thermostat_suggestions
         effective = request.effective_time || now
         return InteractionModel::Status.invalid_command if effective.to_u64 > now.to_u64 + MAX_SUGGESTION_AHEAD_SECONDS
         expiration = effective.to_u64 + request.expiration_in_minutes.to_u64 * 60_u64
         return InteractionModel::Status.invalid_command if expiration > UInt32::MAX
-        tick_suggestions(now)
-        return InteractionModel::Status.resource_exhausted if @thermostat_suggestions.size >= @max_thermostat_suggestions
 
         id = @next_suggestion_id
         256.times do

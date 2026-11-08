@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion Add status precedence
+
+- Check the current suggestion capacity before rejecting an EffectiveTime more
+  than 24 hours ahead. A full list now returns ResourceExhausted for that
+  combined-invalid request, after synchronized time and preset validation.
+  Production TSUGGEST remains gated.
+
 ### Matter 1.6 Thermostat suggestion timer cancellation
 
 - Cancel and rearm guarded Thermostat Suggestion boundary timers when UTC
