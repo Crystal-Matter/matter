@@ -5,6 +5,7 @@ require "./support/main"
 # provider publishes its own calendar and refreshes projections on clock edges.
 module MatterCommodityTariff
   EXAMPLE_PRODUCT_ID = 0x0700_u16
+  REFRESH_HOOK_ENV   = "MATTER_COMMODITY_TARIFF_HOOK_PATH"
 
   alias Tariff = Matter::Cluster::CommodityTariff
 
@@ -174,16 +175,19 @@ module MatterCommodityTariff
           components, periods, default_randomization_offset: 20_i16,
           default_randomization_type: Tariff::DayEntryRandomizationType::Fixed), at: 79_u32)
       end
-      spawn do
-        loop do
-          sleep 1.second
-          now = (Time.utc.to_unix - Tariff::MATTER_EPOCH_UNIX).to_u32
-          commodity_tariff.refresh_at(now)
-          friendly_credit_tariff.refresh_at(now)
-          peak_period_tariff.refresh_at(now)
-          auxiliary_load_tariff.refresh_at(now)
-          power_threshold_tariff.refresh_at(now)
-          randomized_tariff.refresh_at(now)
+      # The refresh hook owns the clock when present, including across device restarts.
+      unless ENV[REFRESH_HOOK_ENV]?
+        spawn do
+          loop do
+            sleep 1.second
+            now = (Time.utc.to_unix - Tariff::MATTER_EPOCH_UNIX).to_u32
+            commodity_tariff.refresh_at(now)
+            friendly_credit_tariff.refresh_at(now)
+            peak_period_tariff.refresh_at(now)
+            auxiliary_load_tariff.refresh_at(now)
+            power_threshold_tariff.refresh_at(now)
+            randomized_tariff.refresh_at(now)
+          end
         end
       end
       super
@@ -191,7 +195,7 @@ module MatterCommodityTariff
 
     protected def on_started : Nil
       super
-      if path = ENV["MATTER_COMMODITY_TARIFF_HOOK_PATH"]?
+      if path = ENV[REFRESH_HOOK_ENV]?
         @hook_active = true
         spawn { poll_hook(path) }
       end
