@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing standalone Object Identification
+
+- Add an OI-only profile with host-supplied object presence, tagged start/end
+  events, HoldTime expiry, and the required object attributes. Omit OC count
+  attributes and event fields from the wire; exercise the profile with the
+  official chip-tool.
+
 ### Matter 1.6 Commodity Tariff randomization
 
 - Support Pricing with Randomization: optional DayEntry offset and type fields,
