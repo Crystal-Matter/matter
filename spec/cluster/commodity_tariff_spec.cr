@@ -26,6 +26,42 @@ private def tariff_publication
 end
 
 describe Tariff do
+  it "projects RNDM day entries on second boundaries with persisted defaults" do
+    cluster = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization)
+    baseline = tariff_publication
+    entries = [
+      Tariff::DayEntry.new(10_u32, 0_u16, randomization_offset: 0_i16,
+        randomization_type: Tariff::DayEntryRandomizationType::None),
+      Tariff::DayEntry.new(11_u32, 1_u16),
+    ]
+    publication = Tariff::Publication.new(baseline.info, baseline.unit,
+      baseline.start_date, entries, baseline.day_patterns,
+      baseline.calendar_periods, baseline.individual_days,
+      baseline.components, baseline.tariff_periods,
+      default_randomization_offset: 20_i16,
+      default_randomization_type: Tariff::DayEntryRandomizationType::Fixed)
+    cluster.publish(publication, at: 79_u32)
+
+    read(cluster, Tariff::GLOBAL_FEATURE_MAP).should eq((Tariff::Feature::Pricing | Tariff::Feature::Randomization).value)
+    read_tlv(cluster, Tariff::ATTR_DEFAULT_RANDOMIZATION_OFFSET).value.should eq(20_i16)
+    read_tlv(cluster, Tariff::ATTR_DEFAULT_RANDOMIZATION_TYPE).value.should eq(Tariff::DayEntryRandomizationType::Fixed.value)
+    first = read_tlv(cluster, Tariff::ATTR_DAY_ENTRIES).as_list.first.as_structure
+    first[3_u8].value.should eq(0_i16)
+    first[4_u8].value.should eq(Tariff::DayEntryRandomizationType::None.value)
+    read_tlv(cluster, Tariff::ATTR_DAY_ENTRIES).as_list.last.as_structure.has_key?(3_u8).should be_false
+    read(cluster, Tariff::ATTR_NEXT_DAY_ENTRY_DATE).should eq(80_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(10_u32)
+    cluster.refresh_at(80_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(11_u32)
+
+    restored = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization)
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(79_u32)
+    restored.next_day_entry_date.should eq(80_u32)
+    restored.refresh_at(80_u32)
+    restored.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(11_u32)
+  end
+
   it "publishes an AuxiliaryLoad-only calendar without Currency or Price" do
     cluster = build(Tariff, feature_map: Tariff::Feature::AuxiliaryLoad)
     baseline = tariff_publication
