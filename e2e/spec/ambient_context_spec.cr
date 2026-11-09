@@ -7,8 +7,51 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, and OI fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, and OC+PRED fixture" do
     device.commission!
+  end
+
+  it "reads OC+PRED crowd-only forecasts and prunes them on clock advance" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 7).should eq(18)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", 7)).int_list("AttributeList")
+    [8, 9, 10, 11].each { |id| attributes.should contain(id) }
+    [0, 1, 2, 3, 4, 5, 6, 7].each { |id| attributes.should_not contain(id) }
+    expect_failure(device.read("ambientcontextsensing", "object-count", 7), "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.read("ambientcontextsensing", "ambient-context-type", 7), "UNSUPPORTED_ATTRIBUTE")
+    initial = expect_success(device.read("ambientcontextsensing", "predicted-activity", 7))
+    initial.output.should_not contain("StartTimestamp")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "predict-crowd:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not publish crowd prediction" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", 7))
+    forecast.output.should contain("StartTimestamp")
+    forecast.output.should contain("EndTimestamp")
+    forecast.output.should contain("CrowdDetected")
+    forecast.output.should contain("CrowdCount: 12")
+    forecast.output.should contain("Confidence: 80")
+    forecast.output.should contain("Confidence: 60")
+    forecast.output.should_not contain("AmbientContextType")
+
+    File.delete(ack)
+    nonce = "advance-crowd-prediction-clock:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not advance crowd prediction clock" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    remaining = expect_success(device.read("ambientcontextsensing", "predicted-activity", 7))
+    remaining.output.should_not contain("CrowdCount")
+    remaining.output.should_not contain("Confidence: 80")
+    remaining.output.should contain("Confidence: 60")
   end
 
   it "reads host-published AUD predictions and prunes them when the test clock advances" do

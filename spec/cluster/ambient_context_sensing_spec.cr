@@ -334,6 +334,84 @@ describe "Ambient Context Sensing OC+PRED profile" do
     cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should be_nil
     read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
   end
+
+  it "publishes crowd-only TLV fields atomically and prunes expired forecasts" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      prediction_clock: -> : UInt32? { now })
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_ep : UInt16, _cl : UInt32, attr : UInt32) { changed << attr; nil }
+    first = Ambient::PredictedActivityStruct.crowd(120_u32, 180_u32, true, 80_u8, 12_u8)
+    second = Ambient::PredictedActivityStruct.crowd(190_u32, 210_u32, false, 60_u8)
+
+    version = cluster.data_version
+    cluster.replace_predicted_activities([first, second])
+    cluster.data_version.should eq(version + 1_u32)
+    changed.should eq([Ambient::ATTR_PREDICTED_ACTIVITY])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire.size.should eq(2)
+    wire[0].as_structure.keys.should eq([0_u8, 1_u8, 3_u8, 4_u8, 5_u8])
+    wire[1].as_structure.keys.should eq([0_u8, 1_u8, 3_u8, 5_u8])
+    decoded = Ambient::PredictedActivityStruct.from_tlv(wire[0])
+    decoded.ambient_context_type.should be_nil
+    decoded.crowd_detected.should be_true
+    decoded.crowd_count.should eq(12_u8)
+    decoded.confidence.should eq(80_u8)
+    cluster.replace_predicted_activities([first, second])
+    cluster.data_version.should eq(version + 1_u32)
+
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+    changed.should eq([Ambient::ATTR_PREDICTED_ACTIVITY] * 3)
+  end
+
+  it "rejects missing clocks, invalid crowd fields, and identity/count operations" do
+    expect_raises(ArgumentError, /clock/) { build(Ambient, feature_map: feature_map) }
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      prediction_clock: -> : UInt32? { now })
+    expect_raises(ArgumentError, /not enabled/) do
+      cluster.observe_object_count(Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person), 1_u16)
+    end
+    expect_raises(ArgumentError, /ObjectIdentification/) do
+      build(Ambient, feature_map: feature_map, prediction_clock: -> : UInt32? { now },
+        object_count_config: Ambient::ObjectCountConfig.new(
+          Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person), 2_u16))
+    end
+    expect_raises(ArgumentError, /crowd count/) do
+      Ambient::PredictedActivityStruct.crowd(120_u32, 180_u32, true, 80_u8, 0_u8)
+    end
+    expect_raises(ArgumentError, /crowd count/) do
+      Ambient::PredictedActivityStruct.crowd(120_u32, 180_u32, true, 80_u8, 255_u8)
+    end
+
+    valid = Ambient::PredictedActivityStruct.crowd(120_u32, 180_u32, true, 80_u8, 12_u8)
+    cluster.replace_predicted_activities([valid])
+    version = cluster.data_version
+    expect_raises(ArgumentError, /crowd prediction/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32,
+          [Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /ordered/) do
+      cluster.replace_predicted_activities([valid,
+                                            Ambient::PredictedActivityStruct.crowd(180_u32, 200_u32, false, 50_u8)])
+    end
+    cluster.data_version.should eq(version)
+    cluster.predicted_activity.should eq([valid])
+
+    now = nil
+    expect_raises(ArgumentError, /unavailable/) do
+      cluster.replace_predicted_activities([valid])
+    end
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
 end
 
 describe "Ambient Context Sensing AUD+PRED profile" do

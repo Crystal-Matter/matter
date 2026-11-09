@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing crowd forecasts
+
+- Add OC+PRED host forecasts with required CrowdDetected, optional bounded
+  CrowdCount, and clock-driven pruning. Keep object identity, count attributes,
+  and detection events absent from this forecast-only profile; verify its wire
+  surface with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing standalone Object Identification
 
 - Add an OI-only profile with host-supplied object presence, tagged start/end
