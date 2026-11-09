@@ -1,6 +1,6 @@
+require "digest/sha256"
 require "../datatype/commodity"
 require "./cluster"
-require "digest/sha256"
 
 module Matter
   module Cluster
@@ -466,6 +466,9 @@ module Matter
                      @tariff_components : Array(TariffComponent) = [] of TariffComponent,
                      @tariff_periods : Array(TariffPeriod) = [] of TariffPeriod)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+        if @feature_map.power_threshold? && !@feature_map.pricing?
+          raise ArgumentError.new("PowerThreshold requires Pricing")
+        end
         unless @feature_map == Feature::Pricing ||
                @feature_map == Feature::FriendlyCredit ||
                @feature_map == Feature::AuxiliaryLoad ||
@@ -603,7 +606,7 @@ module Matter
           end
         end
         schedule.sort_by!(&.start)
-        previous = schedule.select { |item| item.start <= at.to_i64 }.last?
+        previous = schedule.reverse_each.find { |item| item.start <= at.to_i64 }
         following = schedule.find { |item| item.start > at.to_i64 }
         if previous && (duration = previous.entry.duration)
           previous = nil if previous.start + duration.to_i64 * SECONDS_PER_MINUTE.to_i64 <= at.to_i64
