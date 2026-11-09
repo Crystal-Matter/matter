@@ -443,6 +443,93 @@ describe "Ambient Context Sensing AUD profile" do
   end
 end
 
+describe "Ambient Context Sensing OI-only profile" do
+  unknown = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+
+  it "advertises object identification without object counting" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::ObjectIdentification,
+      supported_object_tags: [unknown, person], hold_time: 1_u16)
+
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(Ambient::Feature::ObjectIdentification.value)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    Ambient::AmbientContextTypeStruct.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE).as_list.first).ambient_context_sensed.should eq([unknown])
+    read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED).as_list.size.should eq(2)
+  end
+
+  it "detects and clears a present object without count fields" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::ObjectIdentification,
+      supported_object_tags: [unknown, person], hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+
+    cluster.observe_object(person, true)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
+    Ambient::AmbientContextTypeStruct.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE).as_list.first).ambient_context_sensed.should eq([person])
+    events.map(&.[0]).should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED])
+    started = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.first[1])
+    started.ambient_context_detected.ambient_context_sensed.should eq([person])
+    started.object_count_reached.should be_nil
+    started.object_count.should be_nil
+    events.first[1].as_structure.has_key?(1_u8).should be_false
+    events.first[1].as_structure.has_key?(2_u8).should be_false
+
+    cluster.observe_object(person, true)
+    events.size.should eq(1)
+    cluster.observe_object(person, false)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    Ambient::AmbientContextTypeStruct.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE).as_list.first).ambient_context_sensed.should eq([unknown])
+    events.map(&.[0]).should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+                                 Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED])
+    Ambient::AmbientContextDetectEndedEvent.from_tlv(events.last[1]).event_start_time.should be > 0_u64
+  end
+
+  it "expires, persists HoldTime, and rejects count observations and unsupported tags" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::ObjectIdentification,
+      supported_object_tags: [unknown, person], hold_time: 1_u16)
+    expect_raises(ArgumentError) { cluster.observe_object(unknown, true) }
+    expect_raises(ArgumentError) { cluster.observe_object_count(person, 1_u16) }
+    expect_raises(ArgumentError, /ObjectCountConfig/) do
+      build(Ambient, feature_map: Ambient::Feature::ObjectIdentification,
+        supported_object_tags: [unknown, person],
+        object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16))
+    end
+    cluster.observe_object(person, true)
+    deadline = Time.instant + 3.seconds
+    while cluster.object_identified? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.object_identified?.should be_false
+    write(cluster, Ambient::ATTR_HOLD_TIME, 3_u16).status.should eq(Matter::InteractionModel::StatusCode::Success)
+    document = cluster.save_state.as(Matter::Storage::Document)
+    document.keys.should contain("hold_time")
+    document.keys.should_not contain("object_identified")
+    restored = build(Ambient, feature_map: Ambient::Feature::ObjectIdentification,
+      supported_object_tags: [unknown, person])
+    restored.restore_state(document)
+    restored.hold_time.should eq(3_u16)
+    restored.object_identified?.should be_false
+  end
+end
+
 describe "Ambient Context Sensing OC+OI profile" do
   unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
   person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)

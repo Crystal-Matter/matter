@@ -15,6 +15,7 @@ module MatterAmbientContext
     UNKNOWN_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
     WALKING_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
     MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
+    OBJECT_ONLY_ENDPOINT      =           6_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -73,6 +74,14 @@ module MatterAmbientContext
         as: :predicted_sound_ambient
     end
 
+    endpoint OBJECT_ONLY_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectIdentification,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        hold_time: 30_u16,
+        as: :identified_object_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -97,6 +106,12 @@ module MatterAmbientContext
           elsif nonce.starts_with?("person-count:")
             count = nonce.split(':')[1].to_u16
             object_ambient.observe_object_count(PERSON_OBJECT, count)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-present:")
+            identified_object_ambient.observe_object(PERSON_OBJECT, true)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-absent:")
+            identified_object_ambient.observe_object(PERSON_OBJECT, false)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking:")
             sound_ambient.observe_sound(BARKING_SOUND)

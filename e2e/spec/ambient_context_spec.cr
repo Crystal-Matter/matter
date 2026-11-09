@@ -7,7 +7,7 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, and AUD+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, and OI fixture" do
     device.commission!
   end
 
@@ -169,6 +169,50 @@ describe "synthetic Ambient Context Sensing examples" do
       ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, "2"]))
     started.output.should contain("ObjectCountThresholdReached")
     started.output.should contain("ObjectCount: 2")
+  end
+
+  it "advertises standalone OI without count fields and reports presence and expiry" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 6).should eq(4)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", 6)).int_list("AttributeList")
+    [1, 3, 4, 8, 9, 10].each { |id| attributes.should contain(id) }
+    [0, 2, 5, 6, 7, 11].each { |id| attributes.should_not contain(id) }
+    expect_success(device.read("ambientcontextsensing", "object-identified", 6))
+      .bool("ObjectIdentified").should be_false
+    expect_failure(device.read("ambientcontextsensing", "object-count", 6), "UNSUPPORTED_ATTRIBUTE")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "person-present:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not acknowledge object presence" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+
+    expect_success(device.read("ambientcontextsensing", "object-identified", 6))
+      .bool("ObjectIdentified").should be_true
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 6)).output.should contain("Tag: 3")
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, "6"]))
+    started.output.should contain("AmbientContextDetected")
+    started.output.should contain("Tag: 3")
+    started.output.should_not contain("ObjectCountThresholdReached")
+    started.output.should_not contain("ObjectCount:")
+
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, 6))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break if expect_success(device.read("ambientcontextsensing", "object-identified", 6))
+                 .bool("ObjectIdentified") == false
+      raise "Ambient Context object detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, "6"]))
+    start_time = ended.int("EventStartTime") || ended.int("EventStartTimePos")
+    start_time.as(Int64).should be > 0_i64
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 6)).output.should contain("Tag: 0")
   end
 
   it "advertises only HA and reads canonical default and supported tags" do

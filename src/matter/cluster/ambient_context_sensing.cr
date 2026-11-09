@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+PRED, AUD, AUD+PRED, or OC+OI.
+    # One active detection is supported for HA, HA+PRED, OI, OC+OI, AUD, or AUD+PRED.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
 
@@ -307,10 +307,11 @@ module Matter
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
+               @feature_map == Feature::ObjectIdentification ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, SoundIdentification, SoundIdentification+PredictedActivity, or ObjectCounting+ObjectIdentification is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectCounting+ObjectIdentification, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -329,8 +330,11 @@ module Matter
         elsif @feature_map.object_identification?
           validate_supported_object_tags!(supported_object_tags)
           @supported_object_tags = supported_object_tags.dup
+          if !@feature_map.object_counting? && object_count_config
+            raise ArgumentError.new("ObjectCountConfig requires ObjectCounting")
+          end
           @object_count_config = object_count_config || default_object_count_config
-          validate_object_count_config!(@object_count_config)
+          validate_object_count_config!(@object_count_config) if @feature_map.object_counting?
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
         else
           validate_supported_sound_tags!(supported_sound_tags)
@@ -474,6 +478,37 @@ module Matter
             @event_start_time = Time.utc.to_unix_ms.to_u64
             increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
             increment_version_and_notify(ATTR_AUDIO_CONTEXT_DETECTED)
+            emit_ambient_context_detect_started(
+              AmbientContextDetectStartedEvent.new(@current_type.first.copy))
+          end
+          record_detection_observation(observed_at, new_detection)
+        end
+      end
+
+      # Record whether the host currently identifies one configured object.
+      # This standalone profile has no count threshold or count event fields.
+      def observe_object(tag : SemanticTag, present : Bool) : Nil
+        raise ArgumentError.new("standalone ObjectIdentification profile is not enabled") unless @feature_map == Feature::ObjectIdentification
+        unless @supported_object_tags.includes?(tag) &&
+               tag != SemanticTag.identified_object(IdentifiedObject::Unknown)
+          raise ArgumentError.new("object tag is not supported by this sensor")
+        end
+        @state_mutex.synchronize do
+          observed_at = Time.instant
+          finish_detection if @object_identified && detection_deadline_reached?(observed_at)
+          unless present
+            finish_detection if @object_identified && @current_type.first.ambient_context_sensed.first == tag
+            return
+          end
+          current = @current_type.first.ambient_context_sensed.first
+          finish_detection if @object_identified && current != tag
+          new_detection = !@object_identified
+          if new_detection
+            @current_type = [AmbientContextTypeStruct.new([tag])]
+            @object_identified = true
+            @event_start_time = Time.utc.to_unix_ms.to_u64
+            increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
+            increment_version_and_notify(ATTR_OBJECT_IDENTIFIED)
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy))
           end
@@ -706,16 +741,18 @@ module Matter
           increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
         elsif @feature_map.object_identification?
           @object_identified = false
-          @observed_object_count = 0_u16
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
           increment_version_and_notify(ATTR_OBJECT_IDENTIFIED)
-          if @object_count_reached
-            @object_count_reached = false
-            increment_version_and_notify(ATTR_OBJECT_COUNT_REACHED)
-          end
-          unless @object_count.nil?
-            @object_count = nil
-            increment_version_and_notify(ATTR_OBJECT_COUNT)
+          if @feature_map.object_counting?
+            @observed_object_count = 0_u16
+            if @object_count_reached
+              @object_count_reached = false
+              increment_version_and_notify(ATTR_OBJECT_COUNT_REACHED)
+            end
+            unless @object_count.nil?
+              @object_count = nil
+              increment_version_and_notify(ATTR_OBJECT_COUNT)
+            end
           end
         else
           @audio_context_detected = false
