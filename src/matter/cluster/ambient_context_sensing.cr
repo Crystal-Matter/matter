@@ -414,7 +414,7 @@ module Matter
             end
             tags = prediction.ambient_context_type
             if @feature_map.object_counting?
-              unless tags.nil? && !prediction.crowd_detected.nil?
+              if tags || prediction.crowd_detected.nil?
                 raise ArgumentError.new("crowd prediction must omit ambient context tags and include CrowdDetected")
               end
             else
