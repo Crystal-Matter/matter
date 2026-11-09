@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff randomization
+
+- Support Pricing with Randomization: optional DayEntry offset and type fields,
+  required nullable default attributes, publication validation, second-level
+  schedule projections, and stable per-day random choices across restart.
+  Exercise a fixed-second transition with official chip-tool E2E.
+
 ### Matter 1.6 Commodity Tariff standalone AuxiliaryLoad
 
 - Publish an AuxiliaryLoad-only tariff with Currency and component Price absent

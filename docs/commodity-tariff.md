@@ -22,8 +22,17 @@ tariff exposes null metadata and empty component and period lists. Call
 
 The schedule projection uses UTC dates. Providers whose tariff follows a local
 time zone must convert their timetable before publishing or supply a host
-scheduler that refreshes at the appropriate transitions. Randomized day
-entries are not supported. The FriendlyCredit profile carries an optional
+scheduler that refreshes at the appropriate transitions. A Pricing plus
+Randomization profile publishes optional per-entry offset and type fields and
+the mandatory nullable default offset and type attributes. Omitted entry fields
+fall back to those defaults; a null default applies no offset. Fixed offsets
+shift a boundary by signed whole seconds. Random, RandomPositive, and
+RandomNegative draw whole-second offsets within their advertised bounds.
+Publication rejects offsets with the wrong sign or schedules whose possible
+offsets could reorder consecutive entries. A random seed persists with the
+publication so repeated reads and restart preserve each date's choice. Hosts
+must refresh projections at second resolution when using this profile.
+The FriendlyCredit profile carries an optional
 boolean in each tariff component: `true` marks entry to a friendly credit
 period and `false` marks exit. Current and next component projections, lookup
 responses, and restored publications preserve that value. A standalone
@@ -52,11 +61,12 @@ power (mVA) values plus a required nullable source (`Contract`, `Regulator`, or
 `Equipment`) in a component. A threshold-only component may omit Price; current
 and next projections, lookup, and restored publications preserve the values.
 The tariff host publishes threshold changes, while metering and load control
-remain with the host. The Randomization feature is not advertised.
+remain with the host.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
 Pricing tariff, standalone FriendlyCredit and AuxiliaryLoad profiles, and
-Pricing with PeakPeriod and PowerThreshold on Aggregator endpoints. The official
-chip-tool E2E exercises all profiles and host-driven transitions.
+Pricing with PeakPeriod, PowerThreshold, and Randomization on Aggregator
+endpoints. The official chip-tool E2E exercises all profiles and host-driven
+transitions, including a fixed second-level randomized boundary.
