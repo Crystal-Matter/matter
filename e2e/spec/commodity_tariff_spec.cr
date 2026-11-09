@@ -7,6 +7,7 @@ private FRIENDLY_CREDIT_ENDPOINT = 2
 private PEAK_PERIOD_ENDPOINT     = 3
 private AUXILIARY_LOAD_ENDPOINT  = 4
 private POWER_THRESHOLD_ENDPOINT = 5
+private RANDOMIZATION_ENDPOINT   = 6
 
 private def refresh_tariffs(at : UInt32) : Nil
   trigger = File.join(E2E::LOG_DIR, "matter_commodity_tariff.trigger")
@@ -153,5 +154,29 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
       endpoint: POWER_THRESHOLD_ENDPOINT)).ints("PowerThreshold").should contain(2_000_i64)
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
       endpoint: POWER_THRESHOLD_ENDPOINT)).int("ApparentPowerThreshold").should eq(3_000_i64)
+  end
+
+  it "exposes RNDM defaults and switches tariff components at a fixed second offset" do
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", RANDOMIZATION_ENDPOINT).should eq(33_i64)
+    read_int(device, TARIFF_CLUSTER, "default-randomization-offset", "DefaultRandomizationOffset",
+      RANDOMIZATION_ENDPOINT).should eq(20_i64)
+    read_int(device, TARIFF_CLUSTER, "default-randomization-type", "DefaultRandomizationType",
+      RANDOMIZATION_ENDPOINT).should eq(Tariff::DayEntryRandomizationType::Fixed.value.to_i64)
+    entries = expect_success(device.read(TARIFF_CLUSTER, "day-entries", RANDOMIZATION_ENDPOINT)).output
+    entries.should contain("RandomizationOffset")
+    entries.should contain("RandomizationType")
+    refresh_tariffs(79_u32)
+    read_int(device, TARIFF_CLUSTER, "next-day-entry-date", "NextDayEntryDate", RANDOMIZATION_ENDPOINT).should eq(80_i64)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", RANDOMIZATION_ENDPOINT))
+      .output.should contain("Before randomization")
+    refresh_tariffs(80_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", RANDOMIZATION_ENDPOINT))
+      .output.should contain("After randomization")
+    device.restart!
+    refresh_tariffs(79_u32)
+    read_int(device, TARIFF_CLUSTER, "next-day-entry-date", "NextDayEntryDate", RANDOMIZATION_ENDPOINT).should eq(80_i64)
+    refresh_tariffs(80_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", RANDOMIZATION_ENDPOINT))
+      .output.should contain("After randomization")
   end
 end

@@ -1,5 +1,6 @@
 require "../datatype/commodity"
 require "./cluster"
+require "digest/sha256"
 
 module Matter
   module Cluster
@@ -18,23 +19,24 @@ module Matter
       alias TariffUnit = DataType::TariffUnit
       alias TariffPriceType = DataType::TariffPriceType
 
-      MAX_LABEL_BYTES       =             128
-      MAX_DAY_ENTRIES       =             672
-      MAX_DAY_PATTERNS      =              28
-      MAX_CALENDAR_PERIODS  =               4
-      MAX_INDIVIDUAL_DAYS   =              50
-      MAX_COMPONENTS        =             672
-      MAX_TARIFF_PERIODS    =             672
-      MAX_DAY_IDS           =              96
-      MAX_PERIOD_IDS        =              20
-      MAX_DAYS_PER_PERIOD   =               7
-      MAX_DAY_START_MINUTES =       1_499_u16
-      MAX_DAY_MINUTES       =       1_500_u16
-      SECONDS_PER_DAY       =      86_400_u32
-      SECONDS_PER_MINUTE    =          60_u32
-      MATTER_EPOCH_UNIX     = 946_684_800_i64
-      ALL_WEEKDAYS          =         0x7F_u8
-      ROTATION_START_KEY    = "immediate_rotation_start_date"
+      MAX_LABEL_BYTES        =             128
+      MAX_DAY_ENTRIES        =             672
+      MAX_DAY_PATTERNS       =              28
+      MAX_CALENDAR_PERIODS   =               4
+      MAX_INDIVIDUAL_DAYS    =              50
+      MAX_COMPONENTS         =             672
+      MAX_TARIFF_PERIODS     =             672
+      MAX_DAY_IDS            =              96
+      MAX_PERIOD_IDS         =              20
+      MAX_DAYS_PER_PERIOD    =               7
+      MAX_DAY_START_MINUTES  =       1_499_u16
+      MAX_DAY_MINUTES        =       1_500_u16
+      SECONDS_PER_DAY        =      86_400_u32
+      SECONDS_PER_MINUTE     =          60_u32
+      MATTER_EPOCH_UNIX      = 946_684_800_i64
+      ALL_WEEKDAYS           =         0x7F_u8
+      ROTATION_START_KEY     = "immediate_rotation_start_date"
+      RANDOMIZATION_SEED_KEY = "randomization_seed"
 
       enum BlockMode : UInt8
         NoBlock    = 0
@@ -66,6 +68,14 @@ module Matter
         Contract  = 0
         Regulator = 1
         Equipment = 2
+      end
+
+      enum DayEntryRandomizationType : UInt8
+        None           = 0
+        Fixed          = 1
+        Random         = 2
+        RandomPositive = 3
+        RandomNegative = 4
       end
 
       struct Currency
@@ -118,7 +128,15 @@ module Matter
         @[TLV::Field(tag: 2, optional: true)]
         getter duration : UInt16?
 
-        def initialize(@day_entry_id : UInt32, @start_time : UInt16, @duration : UInt16? = nil)
+        @[TLV::Field(tag: 3, optional: true)]
+        getter randomization_offset : Int16?
+
+        @[TLV::Field(tag: 4, optional: true)]
+        getter randomization_type : DayEntryRandomizationType?
+
+        def initialize(@day_entry_id : UInt32, @start_time : UInt16, @duration : UInt16? = nil,
+                       @randomization_offset : Int16? = nil,
+                       @randomization_type : DayEntryRandomizationType? = nil)
         end
       end
 
@@ -383,6 +401,8 @@ module Matter
         getter individual_days : Array(Day)
         getter components : Array(TariffComponent)
         getter tariff_periods : Array(TariffPeriod)
+        getter default_randomization_offset : Int16?
+        getter default_randomization_type : DayEntryRandomizationType?
 
         def initialize(@info : TariffInformation, @unit : TariffUnit?,
                        @start_date : UInt32?, @day_entries : Array(DayEntry),
@@ -390,7 +410,9 @@ module Matter
                        @calendar_periods : Array(CalendarPeriod),
                        @individual_days : Array(Day),
                        @components : Array(TariffComponent),
-                       @tariff_periods : Array(TariffPeriod))
+                       @tariff_periods : Array(TariffPeriod),
+                       @default_randomization_offset : Int16? = nil,
+                       @default_randomization_type : DayEntryRandomizationType? = nil)
         end
       end
 
@@ -419,8 +441,13 @@ module Matter
         nullable: true, copy_on_assign: true, copy_on_read: true
       attribute 0x0010, :next_tariff_components, Array(TariffComponent), nullable: true,
         copy_on_assign: true, copy_on_read: true
+      attribute 0x0011, :default_randomization_offset, Int16, nullable: true,
+        persist: true, persist_default: nil.as(Int16?), requires: :randomization
+      attribute 0x0012, :default_randomization_type, DayEntryRandomizationType, nullable: true,
+        persist: true, persist_default: nil.as(DayEntryRandomizationType?), requires: :randomization
 
       @immediate_rotation_start_date : UInt32? = nil
+      @randomization_seed : UInt32? = nil
 
       command 0x00, :get_tariff_component, request: GetTariffComponentRequest,
         response: GetTariffComponentResponse, response_id: 0x00, access: :operate
@@ -446,8 +473,9 @@ module Matter
                @feature_map == (Feature::Pricing | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad) ||
-               @feature_map == (Feature::Pricing | Feature::PowerThreshold)
-          raise ArgumentError.new("only Pricing, FriendlyCredit, AuxiliaryLoad, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
+               @feature_map == (Feature::Pricing | Feature::PowerThreshold) ||
+               @feature_map == (Feature::Pricing | Feature::Randomization)
+          raise ArgumentError.new("unsupported Commodity Tariff feature profile")
         end
       end
 
@@ -458,8 +486,11 @@ module Matter
       def publish(publication : Publication, at : UInt32 = matter_now) : Nil
         validate_publication!(publication)
         @immediate_rotation_start_date = publication.start_date.nil? ? at - at % SECONDS_PER_DAY : nil
+        @randomization_seed = Random::Secure.rand(UInt32) if @feature_map.randomization?
         self.tariff_info = publication.info
         self.tariff_unit = publication.unit
+        self.default_randomization_offset = publication.default_randomization_offset
+        self.default_randomization_type = publication.default_randomization_type
         self.start_date = publication.start_date
         self.day_entries = publication.day_entries
         self.day_patterns = publication.day_patterns
@@ -472,8 +503,11 @@ module Matter
 
       def clear_tariff : Nil
         @immediate_rotation_start_date = nil
+        @randomization_seed = nil
         self.tariff_info = nil
         self.tariff_unit = nil
+        self.default_randomization_offset = nil
+        self.default_randomization_type = nil
         self.start_date = nil
         self.day_entries = nil
         self.day_patterns = nil
@@ -492,6 +526,10 @@ module Matter
         unless @tariff_info && entries && @day_patterns && @calendar_periods &&
                (start.nil? || at >= start)
           clear_projections
+          return
+        end
+        if @feature_map.randomization?
+          refresh_randomized_at(at)
           return
         end
         current_date = at - at % SECONDS_PER_DAY
@@ -537,6 +575,77 @@ module Matter
         entry = @day_entries.try(&.find { |item| item.day_entry_id == request.day_entry_id })
         return InteractionModel::Status.not_found unless entry
         GetDayEntryResponse.new(entry)
+      end
+
+      private struct ScheduledEntry
+        getter start : Int64
+        getter entry : DayEntry
+
+        def initialize(@start : Int64, @entry : DayEntry)
+        end
+      end
+
+      private def refresh_randomized_at(at : UInt32) : Nil
+        current_date = at - at % SECONDS_PER_DAY
+        schedule = [] of ScheduledEntry
+        (-1..2).each do |day_shift|
+          date = current_date.to_i64 + day_shift.to_i64 * SECONDS_PER_DAY.to_i64
+          next unless (0_i64..UInt32::MAX.to_i64).includes?(date)
+          day_date = date.to_u32
+          day = day_for(day_date, day_date)
+          next unless day
+          day.day_entry_ids.each do |id|
+            entry = @day_entries.as(Array(DayEntry)).find { |item| item.day_entry_id == id }
+            next unless entry
+            start = date + entry.start_time.to_i64 * SECONDS_PER_MINUTE.to_i64 + randomized_offset(entry, day_date)
+            next unless (0_i64..UInt32::MAX.to_i64).includes?(start)
+            schedule << ScheduledEntry.new(start, entry)
+          end
+        end
+        schedule.sort_by!(&.start)
+        previous = schedule.select { |item| item.start <= at.to_i64 }.last?
+        following = schedule.find { |item| item.start > at.to_i64 }
+        if previous && (duration = previous.entry.duration)
+          previous = nil if previous.start + duration.to_i64 * SECONDS_PER_MINUTE.to_i64 <= at.to_i64
+        end
+        self.current_day = day_for(current_date, at)
+        tomorrow_date = current_date.to_i64 + SECONDS_PER_DAY.to_i64
+        self.next_day = tomorrow_date <= UInt32::MAX ? day_for(tomorrow_date.to_u32, tomorrow_date.to_u32) : nil
+        self.current_day_entry = previous.try(&.entry)
+        self.current_day_entry_date = previous.try(&.start.to_u32)
+        self.next_day_entry = following.try(&.entry)
+        self.next_day_entry_date = following.try(&.start.to_u32)
+        self.current_tariff_components = previous ? components_for(previous.entry.day_entry_id) : [] of TariffComponent
+        self.next_tariff_components = following ? components_for(following.entry.day_entry_id) : nil
+      end
+
+      private def randomized_offset(entry : DayEntry, date : UInt32) : Int32
+        kind = entry.randomization_type || @default_randomization_type || DayEntryRandomizationType::None
+        offset = entry.randomization_offset || @default_randomization_offset || 0_i16
+        minimum, maximum = randomization_bounds(kind, offset)
+        return minimum if minimum == maximum
+        seed = @randomization_seed || raise StorageError.new("missing tariff randomization seed")
+        digest = Digest::SHA256.hexdigest("#{seed}:#{date}:#{entry.day_entry_id}")
+        sample = digest[0, 8].to_u32(16)
+        minimum + (sample % (maximum - minimum + 1).to_u32).to_i32
+      end
+
+      private def randomization_bounds(kind : DayEntryRandomizationType, offset : Int16) : Tuple(Int32, Int32)
+        value = offset.to_i32
+        case kind
+        when DayEntryRandomizationType::None
+          {0, 0}
+        when DayEntryRandomizationType::Fixed
+          {value, value}
+        when DayEntryRandomizationType::Random
+          {-value, value}
+        when DayEntryRandomizationType::RandomPositive
+          {0, value}
+        when DayEntryRandomizationType::RandomNegative
+          {value, 0}
+        else
+          raise ArgumentError.new("invalid DayEntry randomization type")
+        end
       end
 
       private def clear_projections : Nil
@@ -588,6 +697,12 @@ module Matter
 
       private def validate_publication!(publication : Publication) : Nil
         info = publication.info
+        if @feature_map.randomization?
+          validate_randomization!(publication.default_randomization_type || DayEntryRandomizationType::None,
+            publication.default_randomization_offset || 0_i16)
+        elsif publication.default_randomization_offset || publication.default_randomization_type
+          raise ArgumentError.new("randomization defaults require Randomization feature")
+        end
         [info.tariff_label, info.provider_name].each do |label|
           raise ArgumentError.new("tariff label exceeds 128 bytes") if label && label.bytesize > MAX_LABEL_BYTES
         end
@@ -615,10 +730,18 @@ module Matter
           if duration = entry.duration
             raise ArgumentError.new("day entry duration exceeds day end") if duration > MAX_DAY_MINUTES - entry.start_time
           end
+          if @feature_map.randomization?
+            validate_randomization!(entry.randomization_type || publication.default_randomization_type || DayEntryRandomizationType::None,
+              entry.randomization_offset || publication.default_randomization_offset || 0_i16)
+          elsif entry.randomization_offset || entry.randomization_type
+            raise ArgumentError.new("day entry randomization requires Randomization feature")
+          end
         end
         publication.day_patterns.each do |pattern|
           raise ArgumentError.new("invalid days of week") if pattern.days_of_week & ~ALL_WEEKDAYS != 0
-          validate_entry_ids!(pattern.day_entry_ids, entry_ids, publication.day_entries)
+          validate_entry_ids!(pattern.day_entry_ids, entry_ids, publication.day_entries,
+            default_randomization_offset: publication.default_randomization_offset,
+            default_randomization_type: publication.default_randomization_type)
         end
         dates = publication.calendar_periods.map(&.start_date)
         if dates.first.nil? != publication.start_date.nil?
@@ -644,7 +767,8 @@ module Matter
         end
         publication.individual_days.each do |day|
           raise ArgumentError.new("individual day date is not midnight") unless day.date % SECONDS_PER_DAY == 0
-          validate_entry_ids!(day.day_entry_ids, entry_ids, publication.day_entries, day.day_type)
+          validate_entry_ids!(day.day_entry_ids, entry_ids, publication.day_entries, day.day_type,
+            publication.default_randomization_offset, publication.default_randomization_type)
         end
         days = publication.individual_days.map(&.date)
         raise ArgumentError.new("individual days must be sorted and unique") unless days == days.sort.uniq!
@@ -700,12 +824,30 @@ module Matter
       end
 
       private def validate_entry_ids!(ids : Array(UInt32), all_ids : Array(UInt32),
-                                      entries : Array(DayEntry), day_type : DayType = DayType::Standard) : Nil
+                                      entries : Array(DayEntry), day_type : DayType = DayType::Standard,
+                                      default_randomization_offset : Int16? = nil,
+                                      default_randomization_type : DayEntryRandomizationType? = nil) : Nil
         check_size!("day entry IDs", ids.size, 1, MAX_DAY_IDS)
         raise ArgumentError.new("unknown day entry") unless ids.all? { |id| all_ids.includes?(id) }
         selected = ids.map { |id| entries.find { |entry| entry.day_entry_id == id }.as(DayEntry) }
         starts = selected.map(&.start_time)
         raise ArgumentError.new("day entries must increase by start time") unless starts == starts.sort.uniq!
+        if @feature_map.randomization?
+          selected.each_cons_pair do |previous, following|
+            prior_type = previous.randomization_type || default_randomization_type || DayEntryRandomizationType::None
+            prior_offset = previous.randomization_offset || default_randomization_offset || 0_i16
+            next_type = following.randomization_type || default_randomization_type || DayEntryRandomizationType::None
+            next_offset = following.randomization_offset || default_randomization_offset || 0_i16
+            _, prior_latest = randomization_bounds(prior_type, prior_offset)
+            next_earliest, _ = randomization_bounds(next_type, next_offset)
+            prior_end = previous.start_time.to_i32 * SECONDS_PER_MINUTE.to_i32 + prior_latest
+            next_start = following.start_time.to_i32 * SECONDS_PER_MINUTE.to_i32 + next_earliest
+            raise ArgumentError.new("randomized day entries can overtake") if prior_end >= next_start
+            if day_type.event? && (duration = previous.duration)
+              raise ArgumentError.new("randomized event day entries overlap") if prior_end + duration.to_i32 * SECONDS_PER_MINUTE.to_i32 > next_start
+            end
+          end
+        end
         if day_type.event?
           selected.each_cons_pair do |previous, following|
             if duration = previous.duration
@@ -716,6 +858,16 @@ module Matter
           raise ArgumentError.new("first entry must start at midnight") unless starts.first == 0
           raise ArgumentError.new("non-event day has duration") if selected.any?(&.duration)
         end
+      end
+
+      private def validate_randomization!(kind : DayEntryRandomizationType, offset : Int16) : Nil
+        if kind.random_negative?
+          raise ArgumentError.new("RandomNegative offset must be nonpositive") if offset > 0
+        elsif !kind.fixed?
+          raise ArgumentError.new("randomization offset must be nonnegative") if offset < 0
+        end
+        randomization_bounds(kind, offset)
+        nil
       end
 
       private def check_size!(name : String, size : Int32, minimum : Int32, maximum : Int32) : Nil
@@ -731,14 +883,26 @@ module Matter
         if anchor = @immediate_rotation_start_date
           document[ROTATION_START_KEY] = anchor.to_i64
         end
+        if seed = @randomization_seed
+          document[RANDOMIZATION_SEED_KEY] = seed.to_i64
+        end
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
         @immediate_rotation_start_date = nil
+        @randomization_seed = nil
         if value = document[ROTATION_START_KEY]?
           anchor = value.as?(Int64)
           raise StorageError.new("invalid tariff rotation start date") unless anchor && (0_i64..UInt32::MAX.to_i64).includes?(anchor)
           @immediate_rotation_start_date = anchor.to_u32
+        end
+        if value = document[RANDOMIZATION_SEED_KEY]?
+          seed = value.as?(Int64)
+          raise StorageError.new("invalid tariff randomization seed") unless seed && (0_i64..UInt32::MAX.to_i64).includes?(seed)
+          @randomization_seed = seed.to_u32
+        end
+        if @feature_map.randomization? && document["tariff_info"]? && !@randomization_seed
+          raise StorageError.new("missing tariff randomization seed")
         end
       end
 

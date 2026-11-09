@@ -46,6 +46,11 @@ module MatterCommodityTariff
         as: :power_threshold_tariff
     end
 
+    endpoint 6, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization,
+        as: :randomized_tariff
+    end
+
     protected def before_start : Nil
       unless commodity_tariff.tariff_info
         info = Tariff::TariffInformation.new("Daily energy", "Crystal Utility",
@@ -144,15 +149,41 @@ module MatterCommodityTariff
           0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
           components, periods), at: 100_u32)
       end
+      unless randomized_tariff.tariff_info
+        info = Tariff::TariffInformation.new("Randomized tariff", "Crystal Utility",
+          Tariff::Currency.new(36_u16, 2_u8), Tariff::BlockMode::NoBlock)
+        entries = [
+          Tariff::DayEntry.new(1_u32, 0_u16, randomization_offset: 0_i16,
+            randomization_type: Tariff::DayEntryRandomizationType::None),
+          Tariff::DayEntry.new(2_u32, 1_u16),
+        ]
+        pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
+        calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
+        components = [
+          Tariff::TariffComponent.new(1_u32,
+            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 25_i64), nil, "Before randomization"),
+          Tariff::TariffComponent.new(2_u32,
+            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil, "After randomization"),
+        ]
+        periods = [
+          Tariff::TariffPeriod.new("Before", [1_u32], [1_u32]),
+          Tariff::TariffPeriod.new("After", [2_u32], [2_u32]),
+        ]
+        randomized_tariff.publish(Tariff::Publication.new(info, Tariff::TariffUnit::KWh,
+          0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
+          components, periods, default_randomization_offset: 20_i16,
+          default_randomization_type: Tariff::DayEntryRandomizationType::Fixed), at: 79_u32)
+      end
       spawn do
         loop do
-          sleep 60.seconds
+          sleep 1.second
           now = (Time.utc.to_unix - Tariff::MATTER_EPOCH_UNIX).to_u32
           commodity_tariff.refresh_at(now)
           friendly_credit_tariff.refresh_at(now)
           peak_period_tariff.refresh_at(now)
           auxiliary_load_tariff.refresh_at(now)
           power_threshold_tariff.refresh_at(now)
+          randomized_tariff.refresh_at(now)
         end
       end
       super
@@ -182,6 +213,7 @@ module MatterCommodityTariff
             peak_period_tariff.refresh_at(at)
             auxiliary_load_tariff.refresh_at(at)
             power_threshold_tariff.refresh_at(at)
+            randomized_tariff.refresh_at(at)
             File.write("#{path}.ack", nonce)
           end
         end

@@ -62,6 +62,71 @@ describe Tariff do
     restored.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(11_u32)
   end
 
+  it "keeps random day-entry choices stable through refresh and restart" do
+    baseline = tariff_publication
+    [
+      {Tariff::DayEntryRandomizationType::Random, 30_i16, 43_170_u32, 43_230_u32},
+      {Tariff::DayEntryRandomizationType::RandomPositive, 30_i16, 43_200_u32, 43_230_u32},
+      {Tariff::DayEntryRandomizationType::RandomNegative, -30_i16, 43_170_u32, 43_200_u32},
+    ].each do |kind, offset, earliest, latest|
+      cluster = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization)
+      entries = [
+        Tariff::DayEntry.new(10_u32, 0_u16, randomization_type: Tariff::DayEntryRandomizationType::None),
+        Tariff::DayEntry.new(11_u32, 720_u16, randomization_offset: offset, randomization_type: kind),
+      ]
+      publication = Tariff::Publication.new(baseline.info, baseline.unit,
+        baseline.start_date, entries, baseline.day_patterns,
+        baseline.calendar_periods, baseline.individual_days,
+        baseline.components, baseline.tariff_periods)
+      cluster.publish(publication, at: 100_u32)
+      next_date = cluster.next_day_entry_date.as(UInt32)
+      (earliest..latest).includes?(next_date).should be_true
+      cluster.refresh_at(100_u32)
+      cluster.next_day_entry_date.should eq(next_date)
+      restored = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization)
+      restored.restore_state(cluster.save_state)
+      restored.refresh_at(100_u32)
+      restored.next_day_entry_date.should eq(next_date)
+    end
+  end
+
+  it "rejects invalid randomization fields and overtaking entries before publication" do
+    baseline = tariff_publication
+    plain = build(Tariff)
+    entries = [Tariff::DayEntry.new(10_u32, 0_u16,
+      randomization_type: Tariff::DayEntryRandomizationType::Fixed)]
+    publication = Tariff::Publication.new(baseline.info, baseline.unit,
+      baseline.start_date, entries, baseline.day_patterns,
+      baseline.calendar_periods, baseline.individual_days,
+      baseline.components, baseline.tariff_periods)
+    expect_raises(ArgumentError, /Randomization feature/) { plain.publish(publication, at: 100_u32) }
+
+    randomized = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::Randomization)
+    bad_offsets = [
+      {Tariff::DayEntryRandomizationType::Random, -1_i16},
+      {Tariff::DayEntryRandomizationType::RandomPositive, -1_i16},
+      {Tariff::DayEntryRandomizationType::RandomNegative, 1_i16},
+    ]
+    bad_offsets.each do |kind, offset|
+      changed = [Tariff::DayEntry.new(10_u32, 0_u16),
+                 Tariff::DayEntry.new(11_u32, 720_u16, randomization_offset: offset, randomization_type: kind)]
+      rejected = Tariff::Publication.new(baseline.info, baseline.unit,
+        baseline.start_date, changed, baseline.day_patterns,
+        baseline.calendar_periods, baseline.individual_days,
+        baseline.components, baseline.tariff_periods)
+      expect_raises(ArgumentError, /offset/) { randomized.publish(rejected, at: 100_u32) }
+    end
+    overtaking = [Tariff::DayEntry.new(10_u32, 0_u16),
+                  Tariff::DayEntry.new(11_u32, 1_u16, randomization_offset: 61_i16,
+                    randomization_type: Tariff::DayEntryRandomizationType::Random)]
+    rejected = Tariff::Publication.new(baseline.info, baseline.unit,
+      baseline.start_date, overtaking, baseline.day_patterns,
+      baseline.calendar_periods, baseline.individual_days,
+      baseline.components, baseline.tariff_periods)
+    expect_raises(ArgumentError, /overtake/) { randomized.publish(rejected, at: 100_u32) }
+    randomized.tariff_info.should be_nil
+  end
+
   it "publishes an AuxiliaryLoad-only calendar without Currency or Price" do
     cluster = build(Tariff, feature_map: Tariff::Feature::AuxiliaryLoad)
     baseline = tariff_publication
