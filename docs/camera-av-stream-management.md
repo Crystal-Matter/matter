@@ -89,10 +89,10 @@ Aggregator endpoints for official chip-tool wire checks. Their callbacks accept
 logical streams without producing media. Production devices need actual sensors,
 encoders, transports, and hardware privacy integration before advertising ADO
 or VDO. A separate [test-only Camera media
-fixture](camera-webrtc-host-signaling.md) sends synthetic H.264 video to an
-independent Matter.js/Chrome Requestor and verifies decoded frames. Production
-camera topology and media, Push AV delivery, snapshot negotiation, transport
-teardown on privacy changes, and resource preemption across stream usages
+fixture](camera-webrtc-host-signaling.md) sends synthetic H.264 video and Opus
+audio to an independent Matter.js/Chrome Requestor and verifies decoded media.
+Production camera topology and media, Push AV delivery, snapshot negotiation,
+and resource preemption across stream usages
 remain separate gaps requiring independent peer tests.
 
 SQLite and PostgreSQL storage remain optional. Applications include and
@@ -141,4 +141,4 @@ then passes it through
 at the source, and host resource
 admission. Neither this adapter nor the synthetic snapshot fixture advertises
 Camera device type `0x0142` or proves a WebRTC media track; the separate
-test-only WebRTC fixture covers one VDO track.
+test-only WebRTC fixture covers one VDO track and one ADO track.

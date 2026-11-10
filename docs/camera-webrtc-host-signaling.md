@@ -36,11 +36,13 @@ The Matter SDK's Linux Camera example uses libdatachannel plus GStreamer for
 the actual media layer. The optional
 [`matter_camera_media_interop_device.cr`](../examples/matter_camera_media_interop_device.cr)
 test fixture instead connects the host `Peer` to an external aiortc process.
-It sends a synthetic H.264 VDO-only track. A separate Matter.js Camera
+It sends synthetic H.264 video and Opus audio tracks for a combined VDO+ADO
+LiveView session. A separate Matter.js Camera
 Controller commissions the Crystal Camera over CASE, receives its Offer on the
 Requestor endpoint, and passes the SDP to Chrome. The dedicated GitHub Actions
-job checks that Chrome decodes at least two 320×180 frames, then that Matter
-End closes the host peer and frame delivery stops. A second LiveView session
+job checks that Chrome decodes at least two 320×180 frames and nonzero Opus
+audio energy after receiving audio RTP, then that Matter
+End closes the host peer and media delivery stops. A second VDO-only LiveView session
 also decodes frames before the fixture enables software livestream privacy;
 the test checks that the Matter.js Requestor receives a PrivacyMode End, the
 host peer closes, and frame delivery stops. This proves the protocol signaling
@@ -49,6 +51,6 @@ when software privacy disables LiveView.
 
 The Python media engine is a test dependency, not a dependency of the Crystal
 library. The fixture does not exercise a physical sensor, production encoder,
-audio track, Push AV upload, privacy hardware, or the official SDK Camera
+microphone, Push AV upload, privacy hardware, or the official SDK Camera
 Controller. Applications remain responsible for their media engine and for
 admitting each stream against actual host resources.

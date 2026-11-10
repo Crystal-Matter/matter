@@ -97,7 +97,10 @@ def main():
         if result.returncode:
             raise RuntimeError(f"matter.js Requestor exited {result.returncode}:\n" + requestor_log.read_text(errors="replace")[-8000:] +
                                "\nCamera:\n" + camera_log.read_text(errors="replace")[-8000:])
-        print(requestor_log.read_text(errors="replace")[-3000:], flush=True)
+        log = requestor_log.read_text(errors="replace")
+        print("\n".join(line for line in log.splitlines()
+                        if "Chrome decoded synthetic Opus" in line or "PASS:" in line), flush=True)
+        print(log[-3000:], flush=True)
     finally:
         stop(camera)
         stop(media)

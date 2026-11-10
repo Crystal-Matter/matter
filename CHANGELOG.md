@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera WebRTC Opus media interoperability
+
+- Extend the optional Camera media host with a synthetic Opus audio track.
+  The independent Matter.js/Chrome Requestor allocates an ADO stream and
+  verifies received RTP and decoded audio energy alongside H.264 video.
+
 ### Matter 1.6 Camera WebRTC privacy teardown
 
 - Exercise a second synthetic H.264 LiveView session through software privacy:
