@@ -28,7 +28,7 @@ module MatterCameraMediaInterop
 
     def solicit_offer(session : Provider::Session, request : Provider::SolicitOfferRequest) : Status
       offer = bound_device.host_offer(session)
-      bound_device.defer_signal(session) { |sink| sink.offer(session, offer) }
+      bound_device.defer_signal(session, &.offer(session, offer))
     end
 
     def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
