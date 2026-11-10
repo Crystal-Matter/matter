@@ -422,7 +422,7 @@ module Matter
             end
             tags = prediction.ambient_context_type
             if @feature_map.object_counting? && prediction.crowd_detected.nil?
-              raise ArgumentError.new("ObjectCounting prediction requires CrowdDetected")
+              raise ArgumentError.new("crowd prediction requires CrowdDetected")
             end
             if @feature_map.object_identification? || !@feature_map.object_counting?
               unless tags && tags.size == 1 && supported_tags.includes?(tags.first)
