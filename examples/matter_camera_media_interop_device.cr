@@ -178,7 +178,7 @@ module MatterCameraMediaInterop
 
     def host_offer(session : Provider::Session) : String
       media_host_post("/offer", {session_id: session.id,
-                                 audio:      session.audio_streams.try(&.any?) || false})["sdp"].as_s
+                                 audio:      session.audio_streams.try(&.present?) || false})["sdp"].as_s
     end
 
     def host_answer(session : Provider::Session, sdp : String) : Nil
