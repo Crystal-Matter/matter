@@ -133,6 +133,8 @@ module MatterCameraMediaInterop
       peer = @peer || raise Matter::ConfigurationError.new("Camera signaling peer is not initialized")
       peer.device = self
       camera = node.get_cluster!(CAMERA_ENDPOINT_ID, CameraAv)
+      camera.on_audio_allocate { |_request, _id| Status.success }
+      camera.on_audio_deallocate { |_id| Status.success }
       camera.on_video_allocate { |_request, _id| Status.success }
       camera.on_video_deallocate { |_id| Status.success }
       @client = Matter::Controller::Client.new(transport: message_handler.transport,
@@ -175,7 +177,8 @@ module MatterCameraMediaInterop
     end
 
     def host_offer(session : Provider::Session) : String
-      media_host_post("/offer", {session_id: session.id})["sdp"].as_s
+      media_host_post("/offer", {session_id: session.id,
+                                 audio:      session.audio_streams.try(&.any?) || false})["sdp"].as_s
     end
 
     def host_answer(session : Provider::Session, sdp : String) : Nil
