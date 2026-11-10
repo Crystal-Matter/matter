@@ -389,6 +389,122 @@ describe "Ambient Context Sensing OI+PRED profile" do
   end
 end
 
+describe "Ambient Context Sensing OC+OI+PRED profile" do
+  unknown = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification |
+                Ambient::Feature::PredictedActivity
+
+  it "advertises counting, identity, forecasts, and events with both conditional prediction fields" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown, person],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16),
+      prediction_clock: -> : UInt32? { now })
+
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT,
+     Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT, Ambient::ATTR_HOLD_TIME,
+     Ambient::ATTR_HOLD_TIME_LIMITS, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
+
+    forecast = Ambient::PredictedActivityStruct.new(120_u32, 180_u32,
+      [person], 80_u8, true, 12_u8)
+    cluster.replace_predicted_activities([forecast])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.first
+    wire.as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 4_u8, 5_u8])
+    decoded = Ambient::PredictedActivityStruct.from_tlv(wire)
+    decoded.ambient_context_type.should eq([person])
+    decoded.crowd_detected.should be_true
+    decoded.crowd_count.should eq(12_u8)
+  end
+
+  it "validates both forecast dimensions atomically and prunes on clock changes" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown, person],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16),
+      prediction_clock: -> : UInt32? { now })
+    first = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [person], 80_u8, true, 12_u8)
+    second = Ambient::PredictedActivityStruct.new(190_u32, 210_u32, [unknown], 60_u8, false)
+    cluster.replace_predicted_activities([first, second])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire[1].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 5_u8])
+    version = cluster.data_version
+
+    expect_raises(ArgumentError, /CrowdDetected/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [person], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /supported ambient context tag/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.crowd(130_u32, 140_u32, true, 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /supported ambient context tag/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32,
+          [Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)], 50_u8, true),
+      ])
+    end
+    cluster.data_version.should eq(version)
+    cluster.predicted_activity.should eq([first, second])
+
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
+
+  it "keeps live count threshold events and expiry alongside forecasts" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown, person],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16),
+      hold_time: 1_u16, prediction_clock: -> : UInt32? { now })
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.replace_predicted_activities([
+      Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [person], 80_u8, true, 12_u8),
+    ])
+    cluster.observe_object_count(person, 2_u16)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(2_u16)
+    started = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.first[1])
+    started.ambient_context_detected.ambient_context_sensed.should eq([person])
+    started.object_count_reached.should be_true
+    started.object_count.should eq(2_u16)
+
+    deadline = Time.instant + 3.seconds
+    while cluster.object_identified? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.object_identified?.should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+    cluster.predicted_activity.size.should eq(1)
+  end
+end
+
 describe "Ambient Context Sensing OC+PRED profile" do
   feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::PredictedActivity
 
