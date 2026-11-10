@@ -5,6 +5,7 @@ module Matter
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
     # One active detection is supported for HA, HA+PRED, OI, OC+OI, AUD, or AUD+PRED.
+    # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
 
@@ -21,6 +22,7 @@ module Matter
       MAX_SENSED_TYPES            =         2
       MAX_PREDICTED_ACTIVITIES    =        20
       MAX_PREDICTION_TAGS         =       100
+      MAX_CROWD_COUNT             =    254_u8
       MAX_CONFIDENCE              =    100_u8
       MAX_SIMULTANEOUS_DETECTIONS =     10_u8
       SINGLE_DETECTION_LIMIT      =      1_u8
@@ -148,8 +150,8 @@ module Matter
         end
       end
 
-      # HA or AUD prediction: OC fields are absent because these profiles do
-      # not advertise ObjectCounting. Timestamps use the Matter epoch.
+      # HA/AUD forecasts carry semantic tags; OC forecasts carry crowd fields.
+      # Timestamps use the Matter epoch.
       struct PredictedActivityStruct
         include TLV::Serializable
 
@@ -159,24 +161,46 @@ module Matter
         @[TLV::Field(tag: 1)]
         getter end_timestamp : UInt32
 
-        @[TLV::Field(tag: 2)]
-        getter ambient_context_type : Array(SemanticTag)
+        @[TLV::Field(tag: 2, optional: true)]
+        getter ambient_context_type : Array(SemanticTag)?
+
+        @[TLV::Field(tag: 3, optional: true)]
+        getter crowd_detected : Bool?
+
+        @[TLV::Field(tag: 4, optional: true)]
+        getter crowd_count : UInt8?
 
         @[TLV::Field(tag: 5)]
         getter confidence : UInt8
 
         def initialize(@start_timestamp : UInt32, @end_timestamp : UInt32,
-                       tags : Array(SemanticTag), @confidence : UInt8)
+                       tags : Array(SemanticTag)?, @confidence : UInt8,
+                       @crowd_detected : Bool? = nil, @crowd_count : UInt8? = nil)
           raise ArgumentError.new("prediction start must precede end") unless @start_timestamp < @end_timestamp
-          unless (1..MAX_PREDICTION_TAGS).includes?(tags.size)
+          if tags && !(1..MAX_PREDICTION_TAGS).includes?(tags.size)
             raise ArgumentError.new("prediction must contain 1..#{MAX_PREDICTION_TAGS} activity tags")
           end
+          if tags.nil? && @crowd_detected.nil?
+            raise ArgumentError.new("prediction requires activity tags or crowd detection")
+          end
+          if (count = @crowd_count) && (count.zero? || count > MAX_CROWD_COUNT)
+            raise ArgumentError.new("crowd count must be 1..#{MAX_CROWD_COUNT}")
+          end
+          if @crowd_count && @crowd_detected.nil?
+            raise ArgumentError.new("crowd count requires crowd detection")
+          end
           raise ArgumentError.new("prediction confidence must be at most 100") if @confidence > MAX_CONFIDENCE
-          @ambient_context_type = tags.dup
+          @ambient_context_type = tags.try(&.dup)
+        end
+
+        def self.crowd(start_timestamp : UInt32, end_timestamp : UInt32,
+                       detected : Bool, confidence : UInt8, count : UInt8? = nil) : self
+          new(start_timestamp, end_timestamp, nil, confidence, detected, count)
         end
 
         def copy : self
-          self.class.new(@start_timestamp, @end_timestamp, @ambient_context_type, @confidence)
+          self.class.new(@start_timestamp, @end_timestamp, @ambient_context_type, @confidence,
+            @crowd_detected, @crowd_count)
         end
       end
 
@@ -309,9 +333,10 @@ module Matter
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectIdentification ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
+               @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectCounting+ObjectIdentification, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectCounting+ObjectIdentification, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -336,6 +361,10 @@ module Matter
           @object_count_config = object_count_config || default_object_count_config
           validate_object_count_config!(@object_count_config) if @feature_map.object_counting?
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
+        elsif @feature_map.object_counting?
+          raise ArgumentError.new("ObjectCountConfig requires ObjectIdentification") if object_count_config
+          @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
+          @current_type = [] of AmbientContextTypeStruct
         else
           validate_supported_sound_tags!(supported_sound_tags)
           @supported_sound_tags = supported_sound_tags.dup
@@ -384,8 +413,17 @@ module Matter
               raise ArgumentError.new("predictions must be ordered and non-overlapping")
             end
             tags = prediction.ambient_context_type
-            unless tags.size == 1 && supported_tags.includes?(tags.first)
-              raise ArgumentError.new("prediction must use one supported ambient context tag")
+            if @feature_map.object_counting?
+              if tags || prediction.crowd_detected.nil?
+                raise ArgumentError.new("crowd prediction must omit ambient context tags and include CrowdDetected")
+              end
+            else
+              unless tags && tags.size == 1 && supported_tags.includes?(tags.first)
+                raise ArgumentError.new("prediction must use one supported ambient context tag")
+              end
+              unless prediction.crowd_detected.nil? && prediction.crowd_count.nil?
+                raise ArgumentError.new("crowd fields require ObjectCounting")
+              end
             end
             previous_end = prediction.end_timestamp
             prediction.copy
@@ -519,7 +557,9 @@ module Matter
       # The host reports the current number of one identified object. A zero
       # observation ends the detection; positive observations refresh HoldTime.
       def observe_object_count(tag : SemanticTag, count : UInt16) : Nil
-        raise ArgumentError.new("ObjectCounting+ObjectIdentification profile is not enabled") unless @feature_map.object_counting?
+        unless @feature_map.object_counting? && @feature_map.object_identification?
+          raise ArgumentError.new("ObjectCounting+ObjectIdentification profile is not enabled")
+        end
         unless @supported_object_tags.includes?(tag) &&
                tag != SemanticTag.identified_object(IdentifiedObject::Unknown)
           raise ArgumentError.new("object tag is not supported by this sensor")
@@ -619,7 +659,7 @@ module Matter
       end
 
       private def after_restore_state : Nil
-        if @feature_map.object_counting? && !valid_object_count_config?(@object_count_config)
+        if @feature_map.object_counting? && @feature_map.object_identification? && !valid_object_count_config?(@object_count_config)
           @object_count_config = default_object_count_config
         end
       end
