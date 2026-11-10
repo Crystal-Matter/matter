@@ -505,6 +505,23 @@ describe "Ambient Context Sensing OC+OI+PRED profile" do
   end
 end
 
+describe "Ambient Context Sensing OC-only profile" do
+  it "advertises only the unconditional attributes, with no live count, identity, forecast, or events" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::ObjectCounting)
+
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(Ambient::Feature::ObjectCounting.value)
+    [Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT, Ambient::ATTR_HOLD_TIME,
+     Ambient::ATTR_HOLD_TIME_LIMITS].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_IDENTIFIED,
+     Ambient::ATTR_AUDIO_CONTEXT_DETECTED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should_not contain(id) }
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should be_nil
+  end
+end
+
 describe "Ambient Context Sensing OC+PRED profile" do
   feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::PredictedActivity
 
