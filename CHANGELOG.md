@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera WebRTC media interoperability
+
+- Add an optional synthetic H.264 media host behind the Camera Provider peer
+  interface. A dedicated GitHub Actions test commissions the Crystal Camera
+  from Matter.js, negotiates WebRTC with Chrome, verifies decoded video frames,
+  and checks host teardown on Matter End. Media dependencies remain outside the
+  Crystal library.
+
 ### Matter 1.6 Ambient Context Sensing crowd forecasts
 
 - Add OC+PRED host forecasts with required CrowdDetected, optional bounded

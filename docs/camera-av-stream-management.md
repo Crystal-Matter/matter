@@ -88,9 +88,12 @@ The [synthetic audio example](../examples/matter_camera_audio_device.cr) and
 Aggregator endpoints for official chip-tool wire checks. Their callbacks accept
 logical streams without producing media. Production devices need actual sensors,
 encoders, transports, and hardware privacy integration before advertising ADO
-or VDO. Camera device type topology, WebRTC and Push AV media delivery, snapshot
-negotiation, transport teardown on privacy changes, and resource preemption
-across stream usages remain separate gaps requiring independent peer tests.
+or VDO. A separate [test-only Camera media
+fixture](camera-webrtc-host-signaling.md) sends synthetic H.264 video to an
+independent Matter.js/Chrome Requestor and verifies decoded frames. Production
+camera topology and media, Push AV delivery, snapshot negotiation, transport
+teardown on privacy changes, and resource preemption across stream usages
+remain separate gaps requiring independent peer tests.
 
 SQLite and PostgreSQL storage remain optional. Applications include and
 explicitly require an adapter as described in [README storage](../README.md#storage).
@@ -136,5 +139,6 @@ bytes per pixel, nonzero dimensions, and at most 8,294,400 pixels. Quality is
 then passes it through
 `CaptureSnapshot`. Applications still own sensor capture, privacy enforcement
 at the source, and host resource
-admission. Neither this adapter nor the synthetic fixture advertises Camera
-device type `0x0142` or proves a WebRTC media track.
+admission. Neither this adapter nor the synthetic snapshot fixture advertises
+Camera device type `0x0142` or proves a WebRTC media track; the separate
+test-only WebRTC fixture covers one VDO track.
