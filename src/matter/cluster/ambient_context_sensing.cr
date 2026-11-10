@@ -540,7 +540,7 @@ module Matter
       # Record whether the host currently identifies one configured object.
       # OI without OC has no count threshold or count event fields.
       def observe_object(tag : SemanticTag, present : Bool) : Nil
-        unless @feature_map.object_identification? && !@feature_map.object_counting?
+        if !@feature_map.object_identification? || @feature_map.object_counting?
           raise ArgumentError.new("ObjectIdentification without ObjectCounting profile is not enabled")
         end
         unless @supported_object_tags.includes?(tag) &&
