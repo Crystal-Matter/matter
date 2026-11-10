@@ -6,7 +6,8 @@ on:
     paths:
       - '.github/workflows/matterjs-camera-media-interop.yml'
       - 'e2e/interop/matterjs_camera_media*'
-      - 'examples/matter_camera_signaling_interop_device.cr'
+      - 'e2e/interop/camera_media_host.py'
+      - 'examples/matter_camera_media_interop_device.cr'
       - 'src/matter/camera/signaling_sink.cr'
       - 'src/matter/controller/webrtc_requestor_client.cr'
       - 'src/matter/cluster/web_rtc_transport_provider.cr'
@@ -35,20 +36,28 @@ jobs:
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Install matter.js dependencies
         run: npm ci --prefix matter-js
-      - name: Compile Crystal signaling fixture
+      - name: Install independent browser and optional media host
+        run: |
+          npm install --prefix matter-js --no-save playwright@1.56.1
+          matter-js/node_modules/.bin/playwright install --with-deps chromium
+          python3 -m venv /tmp/camera-media-venv
+          /tmp/camera-media-venv/bin/pip install aiortc==1.14.0 aiohttp==3.13.2
+      - name: Compile Crystal Camera media fixture
         run: |
           mkdir -p bin
-          crystal build examples/matter_camera_signaling_interop_device.cr -o bin/matter-camera-signaling-interop --error-trace
-      - name: Verify Camera video media offer over CASE
+          crystal build examples/matter_camera_media_interop_device.cr -o bin/matter-camera-media-interop --error-trace
+      - name: Verify Camera video frames over CASE and WebRTC
         timeout-minutes: 20
+        env:
+          MATTER_CAMERA_MEDIA_PYTHON: /tmp/camera-media-venv/bin/python
         run: |
           python3 e2e/interop/matterjs_camera_media_live.py \
-            --matter-js matter-js --camera bin/matter-camera-signaling-interop \
-            --log-dir tmp/interop-matterjs-camera-signaling
+            --matter-js matter-js --camera bin/matter-camera-media-interop \
+            --log-dir tmp/interop-matterjs-camera-media
       - name: Upload protocol logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: matterjs-camera-signaling-logs
-          path: tmp/interop-matterjs-camera-signaling/*.log
+          name: matterjs-camera-media-logs
+          path: tmp/interop-matterjs-camera-media/*.log
           if-no-files-found: warn

@@ -7,7 +7,9 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import time
+from urllib.request import urlopen
 
 MATTER_JS_COMMIT = "7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b"
 PASSCODE = re.compile(r"Setup PIN:\s*(\d+)")
@@ -45,11 +47,28 @@ def main():
     shutil.copyfile(Path(__file__).with_name("matterjs_camera_media.ts"), target)
     camera_log = logs / "camera.log"
     requestor_log = logs / "requestor.log"
+    media_log = logs / "media.log"
     camera_output = camera_log.open("wb")
+    media_output = media_log.open("wb")
     camera = None
+    media = None
     try:
+        media_python = os.environ.get("MATTER_CAMERA_MEDIA_PYTHON", sys.executable)
+        media = subprocess.Popen([media_python, str(Path(__file__).with_name("camera_media_host.py"))],
+                                 stdout=media_output, stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if media.poll() is not None:
+                raise RuntimeError(f"Media host exited {media.returncode}:\n" + media_log.read_text(errors="replace")[-6000:])
+            try:
+                with urlopen("http://127.0.0.1:18753/state", timeout=1):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            raise RuntimeError("Media host did not start:\n" + media_log.read_text(errors="replace")[-6000:])
         env = os.environ.copy()
-        env["MATTER_CAMERA_SIGNALING_CONTROL_DIR"] = str(control)
+        env["MATTER_CAMERA_MEDIA_CONTROL_DIR"] = str(control)
         camera = subprocess.Popen([str(args.camera.resolve()), "--no-interactive"],
                                   cwd=logs, env=env, stdout=camera_output,
                                   stderr=subprocess.STDOUT, start_new_session=True)
@@ -81,7 +100,9 @@ def main():
         print(requestor_log.read_text(errors="replace")[-3000:], flush=True)
     finally:
         stop(camera)
+        stop(media)
         camera_output.close()
+        media_output.close()
         target.unlink(missing_ok=True)
 
 
