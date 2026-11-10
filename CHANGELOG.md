@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing combined object and crowd forecasts
+
+- Add OC+OI+PRED with host-published object identity and crowd forecasts,
+  live count-threshold observations, clock pruning, and conditional wire
+  fields. Verify the combined profile with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing object forecasts
 
 - Add the OI+PRED profile with tagged host forecasts and clock-driven pruning,
