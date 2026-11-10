@@ -61,6 +61,13 @@ try {
                     pc.ontrack = (event: any) => {
                         if (event.track.kind === "audio") {
                             console.log("Audio track received");
+                            const audioElement = scope.document.createElement("audio");
+                            audioElement.autoplay = true;
+                            audioElement.volume = 0.01;
+                            audioElement.srcObject = new scope.MediaStream([event.track]);
+                            scope.document.body.append(audioElement);
+                            void audioElement.play().then(() => console.log("Audio element playing"),
+                                (error: Error) => console.log("Audio element failed", error.message));
                             const context = new scope.AudioContext({ sampleRate: 48000 });
                             const source = context.createMediaStreamSource(new scope.MediaStream([event.track]));
                             const analyser = context.createAnalyser();
