@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 const [passcodeText, discriminatorText, controlDir] = process.argv.slice(2);
 if (!passcodeText || !discriminatorText || !controlDir) throw new Error("setup and control directory required");
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--no-sandbox"] });
 const page = await browser.newPage();
 page.on("console", message => console.log("Browser:", message.text()));
 await page.goto("about:blank");
@@ -70,6 +70,11 @@ try {
                     console.log("Remote Offer installed", pc.iceConnectionState);
                     await pc.setLocalDescription(await pc.createAnswer());
                     console.log("Local Answer installed", pc.iceGatheringState);
+                    const mediaLine = pc.localDescription.sdp.split("\r\n").find((line: string) => line.startsWith("m=video"));
+                    console.log("Answer media line", mediaLine);
+                    if (!mediaLine || mediaLine.startsWith("m=video 0 ")) {
+                        throw new Error("Browser rejected H.264 video media section");
+                    }
                     if (pc.iceGatheringState !== "complete") {
                         await new Promise<void>(resolve => {
                             pc.addEventListener("icegatheringstatechange", () => {

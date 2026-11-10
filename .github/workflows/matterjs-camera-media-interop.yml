@@ -39,7 +39,7 @@ jobs:
       - name: Install independent browser and optional media host
         run: |
           npm install --prefix matter-js --no-save playwright@1.56.1
-          matter-js/node_modules/.bin/playwright install --with-deps chromium
+          matter-js/node_modules/.bin/playwright install --with-deps chrome
           python3 -m venv /tmp/camera-media-venv
           /tmp/camera-media-venv/bin/pip install aiortc==1.14.0 aiohttp==3.13.2
       - name: Compile Crystal Camera media fixture
