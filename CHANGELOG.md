@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing standalone Object Counting
+
+- Accept the OC-only feature map with its three unconditional attributes. Keep
+  count, identity, forecast, and detection event surfaces absent as specified;
+  verify the opt-in endpoint with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing combined object and crowd forecasts
 
 - Add OC+OI+PRED with host-published object identity and crowd forecasts,

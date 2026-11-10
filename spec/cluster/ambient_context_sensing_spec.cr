@@ -520,6 +520,21 @@ describe "Ambient Context Sensing OC-only profile" do
     cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should be_nil
     cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should be_nil
   end
+
+  it "keeps count, identity, and forecast host operations unavailable" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::ObjectCounting)
+    person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+    expect_raises(ArgumentError, /not enabled/) { cluster.observe_object_count(person, 1_u16) }
+    expect_raises(ArgumentError, /not enabled/) { cluster.observe_object(person, true) }
+    expect_raises(ArgumentError, /not enabled/) do
+      cluster.replace_predicted_activities([] of Ambient::PredictedActivityStruct)
+    end
+    expect_raises(ArgumentError, /ObjectIdentification/) do
+      build(Ambient, feature_map: Ambient::Feature::ObjectCounting,
+        object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16))
+    end
+    expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::PredictedActivity) }
+  end
 end
 
 describe "Ambient Context Sensing OC+PRED profile" do
@@ -950,7 +965,6 @@ describe "Ambient Context Sensing OC+OI profile" do
       supported_object_tags: [person, unknown_object])
     reversed.object_count_config.counting_object.should eq(person)
     reversed.object_count_config.object_count_threshold.should eq(1_u16)
-    expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectCounting) }
     expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectIdentification) }
     expect_raises(ArgumentError) do
       build(Ambient, feature_map: Ambient::Feature::HumanActivity | feature_map)
