@@ -1,4 +1,4 @@
-/** Matter.js Camera Requestor and independent Chromium WebRTC video receiver. */
+/** Matter.js Camera Requestor and independent Chromium WebRTC media receiver. */
 import { Endpoint, Seconds, ServerNode } from "@matter/main";
 import { CameraControllerDevice } from "@matter/main/devices/camera-controller";
 import { CameraAvStreamManagementClient } from "@matter/main/behaviors/camera-av-stream-management";
@@ -45,8 +45,9 @@ try {
         server.events.offer.on((_session, args) => {
             void (async () => {
                 console.log("Matter.js received Camera Offer", args.webRtcSessionId, args.sdp.length);
-                if (args.webRtcSessionId !== expectedSessionId || !args.sdp.includes("m=video")) {
-                    throw new Error("Camera Offer has no matching video media track");
+                if (args.webRtcSessionId !== expectedSessionId || !args.sdp.includes("m=video") ||
+                    (expectedSessionId === 0 && !args.sdp.includes("m=audio"))) {
+                    throw new Error("Camera Offer has no matching audio/video media tracks");
                 }
                 const answer = await page.evaluate(async (sdp: string) => {
                     const scope = globalThis as any;
@@ -57,6 +58,7 @@ try {
                     scope.decodedFrames = 0;
                     scope.frameDimensions = "";
                     pc.ontrack = (event: any) => {
+                        if (event.track.kind === "audio") return;
                         const video = scope.document.createElement("video");
                         video.autoplay = true;
                         video.muted = true;
@@ -104,6 +106,10 @@ try {
     const address = camera.peerAddress;
     const endpoint = camera.parts.get(1);
     if (!address || !endpoint) throw new Error("Commissioned Camera endpoint/address missing");
+    const audioStream = await endpoint.commandsOf(CameraAvStreamManagementClient).audioStreamAllocate({
+        streamUsage: StreamUsage.LiveView, audioCodec: CameraAvStreamManagement.AudioCodec.Opus,
+        channelCount: 1, sampleRate: 48000, bitRate: 64000, bitDepth: 16,
+    });
     const stream = await endpoint.commandsOf(CameraAvStreamManagementClient).videoStreamAllocate({
         streamUsage: StreamUsage.LiveView, videoCodec: CameraAvStreamManagement.VideoCodec.H264,
         minFrameRate: 15, maxFrameRate: 30,
@@ -114,14 +120,23 @@ try {
     await requestor.act(agent => agent.get(WebRtcTransportRequestorServer).upsertSession({
         id: 0, peerNodeId: address.nodeId, peerEndpointId: EndpointNumber(1),
         streamUsage: StreamUsage.LiveView, metadataEnabled: false,
-        videoStreams: [stream.videoStreamId], fabricIndex: address.fabricIndex,
+        audioStreams: [audioStream.audioStreamId], videoStreams: [stream.videoStreamId],
+        fabricIndex: address.fabricIndex,
     }));
     const response = await provider.solicitOffer({
         streamUsage: StreamUsage.LiveView, originatingEndpointId: EndpointNumber(1),
-        videoStreams: [stream.videoStreamId],
+        audioStreams: [audioStream.audioStreamId], videoStreams: [stream.videoStreamId],
     });
     if (response.webRtcSessionId !== 0) throw new Error("Unexpected Provider session ID");
     await waitFor(async () => await page.evaluate(() => (globalThis as any).decodedFrames >= 2), "two decoded frames");
+    await waitFor(async () => await page.evaluate(async () => {
+        const pc = (globalThis as any).cameraPeer as RTCPeerConnection;
+        const audio = pc.getReceivers().find(receiver => receiver.track.kind === "audio");
+        if (!audio) return false;
+        const stats = await audio.getStats();
+        return [...stats.values()].some((entry: any) => entry.type === "inbound-rtp" &&
+            entry.kind === "audio" && entry.totalSamplesReceived >= 960 && entry.totalAudioEnergy > 0);
+    }), "decoded Opus audio samples");
     const dimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
     if (dimensions !== "320x180") throw new Error(`Unexpected decoded frame dimensions: ${dimensions}`);
     writeFileSync(join(controlDir, "end-0"), "end");
