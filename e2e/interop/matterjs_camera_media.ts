@@ -26,6 +26,7 @@ let offerError: Error | undefined;
 let ended = false;
 let endReason: number | undefined;
 let expectedSessionId = 0;
+let installedOfferSessionId = -1;
 const PRIVACY_MODE_END_REASON = 11;
 
 async function waitFor(condition: () => Promise<boolean> | boolean, description: string) {
@@ -88,6 +89,7 @@ try {
                     console.log("ICE gathering complete", pc.localDescription.sdp.length);
                     return pc.localDescription.sdp as string;
                 }, args.sdp);
+                installedOfferSessionId = args.webRtcSessionId;
                 console.log("Matter.js sending Answer", answer.length);
                 await provider.provideAnswer({ webRtcSessionId: expectedSessionId, sdp: answer });
                 console.log("Matter.js Answer accepted");
@@ -153,8 +155,15 @@ try {
         videoStreams: [stream.videoStreamId],
     });
     if (privacySession.webRtcSessionId !== 1) throw new Error("Unexpected privacy test session ID");
-    await waitFor(async () => await page.evaluate(() => (globalThis as any).decodedFrames >= 2),
+    await waitFor(async () => installedOfferSessionId === 1 &&
+        await page.evaluate(() => (globalThis as any).decodedFrames >= 2),
         "two decoded frames before privacy");
+    const privacyFramesBeforeEnd = await page.evaluate(() => (globalThis as any).decodedFrames);
+    const privacyDimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
+    if (privacyDimensions !== "320x180") {
+        throw new Error(`Unexpected privacy session frame dimensions: ${privacyDimensions}`);
+    }
+    console.log(`Privacy session decoded ${privacyFramesBeforeEnd} frames at ${privacyDimensions} before End`);
     writeFileSync(join(controlDir, "privacy-1"), "privacy");
     await waitFor(() => ended, "Matter Requestor PrivacyMode End");
     if (endReason !== PRIVACY_MODE_END_REASON) {
@@ -166,6 +175,7 @@ try {
     }, "privacy host WebRTC peer teardown");
     await new Promise(resolve => setTimeout(resolve, 1000));
     const privateCount = await page.evaluate(() => (globalThis as any).decodedFrames);
+    if (privateCount < 2) throw new Error(`Privacy session decoded only ${privateCount} frames`);
     await new Promise(resolve => setTimeout(resolve, 500));
     if (await page.evaluate(() => (globalThis as any).decodedFrames) !== privateCount) {
         throw new Error("Video frames continued after privacy");
