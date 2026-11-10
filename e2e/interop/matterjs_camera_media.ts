@@ -14,6 +14,7 @@ const [passcodeText, discriminatorText, controlDir] = process.argv.slice(2);
 if (!passcodeText || !discriminatorText || !controlDir) throw new Error("setup and control directory required");
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
 const page = await browser.newPage();
+page.on("console", message => console.log("Browser:", message.text()));
 await page.goto("about:blank");
 const controller = await ServerNode.create(ServerNode.RootEndpointWithoutGroupcast, {
     id: "camera-media-requestor", network: { port: 5562, tcp: true },
@@ -39,12 +40,15 @@ try {
         const server = agent.get(WebRtcTransportRequestorServer);
         server.events.offer.on((_session, args) => {
             void (async () => {
+                console.log("Matter.js received Camera Offer", args.webRtcSessionId, args.sdp.length);
                 if (args.webRtcSessionId !== 0 || !args.sdp.includes("m=video")) {
                     throw new Error("Camera Offer has no matching video media track");
                 }
                 const answer = await page.evaluate(async (sdp: string) => {
                     const scope = globalThis as any;
                     const pc = new scope.RTCPeerConnection({ iceServers: [] });
+                    pc.oniceconnectionstatechange = () => console.log("ICE state", pc.iceConnectionState);
+                    pc.onconnectionstatechange = () => console.log("Peer state", pc.connectionState);
                     scope.cameraPeer = pc;
                     scope.decodedFrames = 0;
                     scope.frameDimensions = "";
@@ -63,7 +67,9 @@ try {
                         void video.play();
                     };
                     await pc.setRemoteDescription({ type: "offer", sdp });
+                    console.log("Remote Offer installed", pc.iceConnectionState);
                     await pc.setLocalDescription(await pc.createAnswer());
+                    console.log("Local Answer installed", pc.iceGatheringState);
                     if (pc.iceGatheringState !== "complete") {
                         await new Promise<void>(resolve => {
                             pc.addEventListener("icegatheringstatechange", () => {
@@ -71,9 +77,12 @@ try {
                             });
                         });
                     }
+                    console.log("ICE gathering complete", pc.localDescription.sdp.length);
                     return pc.localDescription.sdp as string;
                 }, args.sdp);
+                console.log("Matter.js sending Answer", answer.length);
                 await provider.provideAnswer({ webRtcSessionId: 0, sdp: answer });
+                console.log("Matter.js Answer accepted");
             })().catch(error => { offerError = error instanceof Error ? error : new Error(String(error)); });
         });
         server.events.end.on(() => { ended = true; });
@@ -107,12 +116,18 @@ try {
     if (dimensions !== "320x180") throw new Error(`Unexpected decoded frame dimensions: ${dimensions}`);
     writeFileSync(join(controlDir, "end-0"), "end");
     await waitFor(() => ended, "Matter Requestor End");
-    await page.evaluate(() => (globalThis as any).cameraPeer.close());
+    await waitFor(async () => {
+        const state = await (await fetch("http://127.0.0.1:18753/state")).json() as Record<string, unknown>;
+        return !("0" in state);
+    }, "host WebRTC peer teardown");
+    // Allow an already-decoded frame to drain, then require delivery to stop.
+    await new Promise(resolve => setTimeout(resolve, 1000));
     const count = await page.evaluate(() => (globalThis as any).decodedFrames);
     await new Promise(resolve => setTimeout(resolve, 500));
     if (await page.evaluate(() => (globalThis as any).decodedFrames) !== count) {
         throw new Error("Video frames continued after End");
     }
+    await page.evaluate(() => (globalThis as any).cameraPeer.close());
     console.log(`PASS: Matter.js Requestor received ${count} decoded WebRTC H.264 frames at ${dimensions}; End stopped media`);
 } finally {
     await controller.close();
