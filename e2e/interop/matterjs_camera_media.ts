@@ -24,6 +24,10 @@ await controller.add(requestor);
 let provider: any;
 let offerError: Error | undefined;
 let ended = false;
+let endReason: number | undefined;
+let expectedSessionId = 0;
+let installedOfferSessionId = -1;
+const PRIVACY_MODE_END_REASON = 11;
 
 async function waitFor(condition: () => Promise<boolean> | boolean, description: string) {
     for (let n = 0; n < 300; n++) {
@@ -41,7 +45,7 @@ try {
         server.events.offer.on((_session, args) => {
             void (async () => {
                 console.log("Matter.js received Camera Offer", args.webRtcSessionId, args.sdp.length);
-                if (args.webRtcSessionId !== 0 || !args.sdp.includes("m=video")) {
+                if (args.webRtcSessionId !== expectedSessionId || !args.sdp.includes("m=video")) {
                     throw new Error("Camera Offer has no matching video media track");
                 }
                 const answer = await page.evaluate(async (sdp: string) => {
@@ -85,12 +89,13 @@ try {
                     console.log("ICE gathering complete", pc.localDescription.sdp.length);
                     return pc.localDescription.sdp as string;
                 }, args.sdp);
+                installedOfferSessionId = args.webRtcSessionId;
                 console.log("Matter.js sending Answer", answer.length);
-                await provider.provideAnswer({ webRtcSessionId: 0, sdp: answer });
+                await provider.provideAnswer({ webRtcSessionId: expectedSessionId, sdp: answer });
                 console.log("Matter.js Answer accepted");
             })().catch(error => { offerError = error instanceof Error ? error : new Error(String(error)); });
         });
-        server.events.end.on(() => { ended = true; });
+        server.events.end.on((_session, reason) => { ended = true; endReason = reason; });
     });
     const camera = await controller.peers.commission({
         id: "camera", passcode: Number(passcodeText), discriminator: Number(discriminatorText), timeout: Seconds(60),
@@ -134,6 +139,49 @@ try {
     }
     await page.evaluate(() => (globalThis as any).cameraPeer.close());
     console.log(`PASS: Matter.js Requestor received ${count} decoded WebRTC H.264 frames at ${dimensions}; End stopped media`);
+
+    // A second live session must end through the Camera privacy path, without
+    // the explicit host hangup control used above.
+    expectedSessionId = 1;
+    ended = false;
+    endReason = undefined;
+    await requestor.act(agent => agent.get(WebRtcTransportRequestorServer).upsertSession({
+        id: 1, peerNodeId: address.nodeId, peerEndpointId: EndpointNumber(1),
+        streamUsage: StreamUsage.LiveView, metadataEnabled: false,
+        videoStreams: [stream.videoStreamId], fabricIndex: address.fabricIndex,
+    }));
+    const privacySession = await provider.solicitOffer({
+        streamUsage: StreamUsage.LiveView, originatingEndpointId: EndpointNumber(1),
+        videoStreams: [stream.videoStreamId],
+    });
+    if (privacySession.webRtcSessionId !== 1) throw new Error("Unexpected privacy test session ID");
+    await waitFor(async () => installedOfferSessionId === 1 &&
+        await page.evaluate(() => (globalThis as any).decodedFrames >= 2),
+        "two decoded frames before privacy");
+    const privacyFramesBeforeEnd = await page.evaluate(() => (globalThis as any).decodedFrames);
+    const privacyDimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
+    if (privacyDimensions !== "320x180") {
+        throw new Error(`Unexpected privacy session frame dimensions: ${privacyDimensions}`);
+    }
+    console.log(`Privacy session decoded ${privacyFramesBeforeEnd} frames at ${privacyDimensions} before End`);
+    writeFileSync(join(controlDir, "privacy-1"), "privacy");
+    await waitFor(() => ended, "Matter Requestor PrivacyMode End");
+    if (endReason !== PRIVACY_MODE_END_REASON) {
+        throw new Error(`Expected PrivacyMode End reason, got ${endReason}`);
+    }
+    await waitFor(async () => {
+        const state = await (await fetch("http://127.0.0.1:18753/state")).json() as Record<string, unknown>;
+        return !("1" in state);
+    }, "privacy host WebRTC peer teardown");
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const privateCount = await page.evaluate(() => (globalThis as any).decodedFrames);
+    if (privateCount < 2) throw new Error(`Privacy session decoded only ${privateCount} frames`);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (await page.evaluate(() => (globalThis as any).decodedFrames) !== privateCount) {
+        throw new Error("Video frames continued after privacy");
+    }
+    await page.evaluate(() => (globalThis as any).cameraPeer.close());
+    console.log(`PASS: Soft livestream privacy ended Matter session with PrivacyMode and stopped ${privateCount} decoded frames`);
 } finally {
     await controller.close();
     await browser.close();
