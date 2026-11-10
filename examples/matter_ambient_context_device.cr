@@ -8,22 +8,24 @@ module MatterAmbientContext
     include Examples::Console
 
     alias Ambient = Matter::Cluster::AmbientContextSensing
-    UNKNOWN_OBJECT            = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
-    PERSON_OBJECT             = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
-    UNKNOWN_SOUND             = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
-    BARKING_SOUND             = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
-    UNKNOWN_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
-    WALKING_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
-    MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
-    OBJECT_ONLY_ENDPOINT      =           6_u16
-    CROWD_FORECAST_ENDPOINT   =           7_u16
-    OBJECT_FORECAST_ENDPOINT  =           8_u16
+    UNKNOWN_OBJECT                   = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+    PERSON_OBJECT                    = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+    UNKNOWN_SOUND                    = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+    BARKING_SOUND                    = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+    UNKNOWN_ACTIVITY                 = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+    WALKING_ACTIVITY                 = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+    MATTER_EPOCH_UNIX_SECONDS        = 946_684_800_i64
+    OBJECT_ONLY_ENDPOINT             =           6_u16
+    CROWD_FORECAST_ENDPOINT          =           7_u16
+    OBJECT_FORECAST_ENDPOINT         =           8_u16
+    COUNTED_OBJECT_FORECAST_ENDPOINT =           9_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @sound_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @crowd_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @object_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
+    @counted_object_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Ambient Context",
       vendor_id: Matter::SetupPayload.test_vendor_id,
@@ -101,6 +103,16 @@ module MatterAmbientContext
         as: :predicted_object_ambient
     end
 
+    endpoint COUNTED_OBJECT_FORECAST_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification |
+                     Ambient::Feature::PredictedActivity,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        object_count_config: Ambient::ObjectCountConfig.new(PERSON_OBJECT, 2_u16),
+        prediction_clock: -> : UInt32? { @counted_object_prediction_now },
+        as: :predicted_counted_object_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -125,6 +137,10 @@ module MatterAmbientContext
           elsif nonce.starts_with?("person-count:")
             count = nonce.split(':')[1].to_u16
             object_ambient.observe_object_count(PERSON_OBJECT, count)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-count-pred:")
+            count = nonce.split(':')[1].to_u16
+            predicted_counted_object_ambient.observe_object_count(PERSON_OBJECT, count)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present:")
             identified_object_ambient.observe_object(PERSON_OBJECT, true)
@@ -179,6 +195,19 @@ module MatterAmbientContext
           elsif nonce.starts_with?("advance-object-prediction-clock:")
             @object_prediction_now += 120_u32
             predicted_object_ambient.refresh_predicted_activities
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("predict-counted-person:")
+            start_at = @counted_object_prediction_now + 120_u32
+            predicted_counted_object_ambient.replace_predicted_activities([
+              Ambient::PredictedActivityStruct.new(start_at, start_at + 60_u32,
+                [PERSON_OBJECT], 80_u8, true, 12_u8),
+              Ambient::PredictedActivityStruct.new(start_at + 120_u32, start_at + 180_u32,
+                [UNKNOWN_OBJECT], 60_u8, false),
+            ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("advance-counted-object-prediction-clock:")
+            @counted_object_prediction_now += 120_u32
+            predicted_counted_object_ambient.refresh_predicted_activities
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("advance-crowd-prediction-clock:")
             @crowd_prediction_now += 120_u32

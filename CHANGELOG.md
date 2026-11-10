@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the Camera Provider sends a PrivacyMode End to the Matter.js Requestor,
   releases the host WebRTC peer, and stops decoded video frames.
 
+### Matter 1.6 Ambient Context Sensing combined object and crowd forecasts
+
+- Add OC+OI+PRED with host-published object identity and crowd forecasts,
+  live count-threshold observations, clock pruning, and conditional wire
+  fields. Verify the combined profile with official chip-tool E2E.
+
 ### Matter 1.6 Camera WebRTC media interoperability
 
 - Add an optional synthetic H.264 media host behind the Camera Provider peer

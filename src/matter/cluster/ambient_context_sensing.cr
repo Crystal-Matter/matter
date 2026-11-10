@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+PRED, OI, OI+PRED, OC+OI, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+PRED, OI, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -334,10 +334,11 @@ module Matter
                @feature_map == Feature::ObjectIdentification ||
                @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
+               @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting+ObjectIdentification, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -420,17 +421,18 @@ module Matter
               raise ArgumentError.new("predictions must be ordered and non-overlapping")
             end
             tags = prediction.ambient_context_type
-            if @feature_map.object_counting?
-              if tags || prediction.crowd_detected.nil?
-                raise ArgumentError.new("crowd prediction must omit ambient context tags and include CrowdDetected")
-              end
-            else
+            if @feature_map.object_counting? && prediction.crowd_detected.nil?
+              raise ArgumentError.new("crowd prediction requires CrowdDetected")
+            end
+            if @feature_map.object_identification? || !@feature_map.object_counting?
               unless tags && tags.size == 1 && supported_tags.includes?(tags.first)
                 raise ArgumentError.new("prediction must use one supported ambient context tag")
               end
-              unless prediction.crowd_detected.nil? && prediction.crowd_count.nil?
-                raise ArgumentError.new("crowd fields require ObjectCounting")
-              end
+            elsif tags
+              raise ArgumentError.new("crowd prediction must omit ambient context tags")
+            end
+            if !@feature_map.object_counting? && (!prediction.crowd_detected.nil? || !prediction.crowd_count.nil?)
+              raise ArgumentError.new("crowd fields require ObjectCounting")
             end
             previous_end = prediction.end_timestamp
             prediction.copy
