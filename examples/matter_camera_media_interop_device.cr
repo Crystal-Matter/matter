@@ -90,7 +90,8 @@ module MatterCameraMediaInterop
           CameraAv::ImageCodec::Jpeg, true, true)],
         max_concurrent_encoders: 1_u8,
         max_encoded_pixel_rate: 62_208_000_u32,
-        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Video | CameraAv::Feature::Snapshot
+        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Video |
+                     CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy
       client_cluster Requestor::CLUSTER_ID
     end
   end
@@ -193,7 +194,19 @@ module MatterCameraMediaInterop
     end
 
     def forward_host_end(session : Provider::Session, reason : Provider::EndReason) : Nil
-      signaling_sink.end_session(session, reason) if @host_end_enabled
+      if @host_end_enabled
+        signaling_sink.end_session(session, reason)
+      elsif reason == Provider::EndReason::PrivacyMode
+        # A privacy change can occur inside an inbound Write; send End after
+        # that response has had a chance to leave the Matter exchange.
+        spawn do
+          begin
+            signaling_sink.end_session(session, reason)
+          rescue ex
+            Log.error(exception: ex) { "Camera privacy End signaling failed" }
+          end
+        end
+      end
     end
 
     protected def on_started : Nil
@@ -217,6 +230,14 @@ module MatterCameraMediaInterop
                     end
                   end
                 end
+              end
+            end
+            Dir.glob(File.join(control_dir, "privacy-*")).each do |path|
+              id = File.basename(path).lchop("privacy-").to_u16?
+              File.delete(path)
+              if id
+                node.get_cluster!(CAMERA_ENDPOINT_ID, CameraAv)
+                  .soft_livestream_privacy_mode_enabled = true
               end
             end
             sleep 100.milliseconds
