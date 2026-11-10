@@ -60,6 +60,7 @@ try {
                     scope.frameDimensions = "";
                     pc.ontrack = (event: any) => {
                         if (event.track.kind === "audio") {
+                            console.log("Audio track received");
                             const context = new scope.AudioContext({ sampleRate: 48000 });
                             const source = context.createMediaStreamSource(new scope.MediaStream([event.track]));
                             const analyser = context.createAnalyser();
@@ -147,15 +148,20 @@ try {
     });
     if (response.webRtcSessionId !== 0) throw new Error("Unexpected Provider session ID");
     await waitFor(async () => await page.evaluate(() => (globalThis as any).decodedFrames >= 2), "two decoded frames");
-    await waitFor(async () => await page.evaluate(async () => {
+    let audioPolls = 0;
+    await waitFor(async () => {
+        const observation = await page.evaluate(async () => {
         const pc = (globalThis as any).cameraPeer as RTCPeerConnection;
         const audio = pc.getReceivers().find(receiver => receiver.track.kind === "audio");
-        if (!audio) return false;
+        if (!audio) return { context: "no audio receiver", energy: 0, reports: [] };
         const stats = await audio.getStats();
-        return [...stats.values()].some((entry: any) => entry.type === "inbound-rtp" &&
-            entry.kind === "audio" && entry.packetsReceived >= 2) &&
-            (globalThis as any).audioEnergy > 1;
-    }), "decoded Opus audio samples");
+        return { context: (globalThis as any).audioContext?.state, energy: (globalThis as any).audioEnergy,
+            reports: [...stats.values()].filter((entry: any) => entry.type === "inbound-rtp") };
+        });
+        if (++audioPolls % 50 === 0) console.log("Audio observation", JSON.stringify(observation));
+        return observation.reports.some((entry: any) => entry.kind === "audio" && entry.packetsReceived >= 2) &&
+            observation.energy > 1;
+    }, "decoded Opus audio samples");
     const audioEnergy = await page.evaluate(() => (globalThis as any).audioEnergy);
     console.log(`Chrome decoded synthetic Opus audio energy ${audioEnergy}`);
     const dimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
