@@ -918,6 +918,17 @@ describe "Ambient Context Sensing HA+OI profile" do
     read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
     cluster.ambient_context_type.first.ambient_context_sensed.should eq([unknown_object])
     events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+
+    cluster.observe_object(person, true)
+    cluster.observe_human_activity(walking)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    read(cluster, Ambient::ATTR_HUMAN_ACTIVITY_DETECTED).should be_true
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([walking])
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+      .ambient_context_detected.ambient_context_sensed.should eq([walking])
+    cluster.observe_object(person, false)
+    read(cluster, Ambient::ATTR_HUMAN_ACTIVITY_DETECTED).should be_true
   end
 end
 

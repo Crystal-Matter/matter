@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+PRED, OI, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+OI, HA+PRED, OI, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -331,6 +331,7 @@ module Matter
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification) ||
                @feature_map == Feature::ObjectIdentification ||
                @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectCounting ||
@@ -339,7 +340,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -354,6 +355,14 @@ module Matter
           validate_supported_tags!(supported_activity_tags)
           @supported_activity_tags = supported_activity_tags.dup
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.human_activity(HumanActivity::Unknown)])]
+          if @feature_map.object_identification?
+            validate_supported_object_tags!(supported_object_tags)
+            @supported_object_tags = supported_object_tags.dup
+            if @supported_activity_tags.size + @supported_object_tags.size > MAX_SUPPORTED_TYPES
+              raise ArgumentError.new("combined supported tags exceed #{MAX_SUPPORTED_TYPES}")
+            end
+          end
+          raise ArgumentError.new("ObjectCountConfig requires ObjectCounting") if object_count_config
           @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
         elsif @feature_map.object_identification?
           validate_supported_object_tags!(supported_object_tags)
@@ -390,13 +399,7 @@ module Matter
       end
 
       def ambient_context_type_supported : Array(SemanticTag)
-        if @feature_map.human_activity?
-          @supported_activity_tags.dup
-        elsif @feature_map.object_identification?
-          @supported_object_tags.dup
-        else
-          @supported_sound_tags.dup
-        end
+        @supported_activity_tags + @supported_object_tags + @supported_sound_tags
       end
 
       # Replace the complete host forecast after validation. The host owns
@@ -485,6 +488,7 @@ module Matter
         end
         @state_mutex.synchronize do
           observed_at = Time.instant
+          finish_detection if @object_identified
           finish_detection if @human_activity_detected && detection_deadline_reached?(observed_at)
           current = @current_type.first.ambient_context_sensed.first
           if @human_activity_detected && current != tag
@@ -534,10 +538,9 @@ module Matter
       end
 
       # Record whether the host currently identifies one configured object.
-      # The OI and OI+PRED profiles have no count threshold or count event fields.
+      # OI without OC has no count threshold or count event fields.
       def observe_object(tag : SemanticTag, present : Bool) : Nil
-        unless @feature_map == Feature::ObjectIdentification ||
-               @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity)
+        unless @feature_map.object_identification? && !@feature_map.object_counting?
           raise ArgumentError.new("ObjectIdentification without ObjectCounting profile is not enabled")
         end
         unless @supported_object_tags.includes?(tag) &&
@@ -551,6 +554,7 @@ module Matter
             finish_detection if @object_identified && @current_type.first.ambient_context_sensed.first == tag
             return
           end
+          finish_detection if @human_activity_detected
           current = @current_type.first.ambient_context_sensed.first
           finish_detection if @object_identified && current != tag
           new_detection = !@object_identified
@@ -788,11 +792,11 @@ module Matter
       end
 
       private def finish_detection : Nil
-        if @feature_map.human_activity?
+        if @human_activity_detected
           @human_activity_detected = false
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.human_activity(HumanActivity::Unknown)])]
           increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
-        elsif @feature_map.object_identification?
+        elsif @object_identified
           @object_identified = false
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
           increment_version_and_notify(ATTR_OBJECT_IDENTIFIED)
