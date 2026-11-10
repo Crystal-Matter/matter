@@ -40,8 +40,12 @@ It sends a synthetic H.264 VDO-only track. A separate Matter.js Camera
 Controller commissions the Crystal Camera over CASE, receives its Offer on the
 Requestor endpoint, and passes the SDP to Chrome. The dedicated GitHub Actions
 job checks that Chrome decodes at least two 320×180 frames, then that Matter
-End closes the host peer and frame delivery stops. This proves the protocol
-signaling can carry a real ICE/DTLS/SRTP media session to an independent peer.
+End closes the host peer and frame delivery stops. A second LiveView session
+also decodes frames before the fixture enables software livestream privacy;
+the test checks that the Matter.js Requestor receives a PrivacyMode End, the
+host peer closes, and frame delivery stops. This proves the protocol signaling
+can carry a real ICE/DTLS/SRTP media session to an independent peer and end it
+when software privacy disables LiveView.
 
 The Python media engine is a test dependency, not a dependency of the Crystal
 library. The fixture does not exercise a physical sensor, production encoder,

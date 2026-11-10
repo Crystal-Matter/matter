@@ -200,11 +200,9 @@ module MatterCameraMediaInterop
         # A privacy change can occur inside an inbound Write; send End after
         # that response has had a chance to leave the Matter exchange.
         spawn do
-          begin
-            signaling_sink.end_session(session, reason)
-          rescue ex
-            Log.error(exception: ex) { "Camera privacy End signaling failed" }
-          end
+          signaling_sink.end_session(session, reason)
+        rescue ex
+          Log.error(exception: ex) { "Camera privacy End signaling failed" }
         end
       end
     end
