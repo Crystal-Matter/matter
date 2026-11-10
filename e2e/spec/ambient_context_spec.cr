@@ -7,8 +7,22 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, and OC+OI+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, and OC fixture" do
     device.commission!
+  end
+
+  it "advertises standalone OC with only universal attributes and no count or detection surface" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 10).should eq(2)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", 10)).int_list("AttributeList")
+    [8, 9, 10].each { |id| attributes.should contain(id) }
+    [0, 1, 2, 3, 4, 5, 6, 7, 11].each { |id| attributes.should_not contain(id) }
+    read_int(device, "ambientcontextsensing", "simultaneous-detection-limit", "SimultaneousDetectionLimit", 10)
+      .should eq(1)
+    expect_failure(device.read("ambientcontextsensing", "object-count", 10), "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.read("ambientcontextsensing", "object-identified", 10), "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.read("ambientcontextsensing", "predicted-activity", 10), "UNSUPPORTED_ATTRIBUTE")
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, 10))
+    read_int(device, "ambientcontextsensing", "hold-time", "HoldTime", 10).should eq(1)
   end
 
   it "reads OC+OI+PRED identity and crowd forecasts with live count events and expiry" do

@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The independent Matter.js/Chrome Requestor allocates an ADO stream and
   verifies received RTP and decoded audio energy alongside H.264 video.
 
+### Matter 1.6 Ambient Context Sensing standalone Object Counting
+
+- Accept the OC-only feature map with its three unconditional attributes. Keep
+  count, identity, forecast, and detection event surfaces absent as specified;
+  verify the opt-in endpoint with official chip-tool E2E.
+
 ### Matter 1.6 Camera WebRTC privacy teardown
 
 - Exercise a second synthetic H.264 LiveView session through software privacy:

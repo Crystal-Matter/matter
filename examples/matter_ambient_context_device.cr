@@ -19,6 +19,7 @@ module MatterAmbientContext
     CROWD_FORECAST_ENDPOINT          =           7_u16
     OBJECT_FORECAST_ENDPOINT         =           8_u16
     COUNTED_OBJECT_FORECAST_ENDPOINT =           9_u16
+    OBJECT_COUNT_ONLY_ENDPOINT       =          10_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -111,6 +112,12 @@ module MatterAmbientContext
         object_count_config: Ambient::ObjectCountConfig.new(PERSON_OBJECT, 2_u16),
         prediction_clock: -> : UInt32? { @counted_object_prediction_now },
         as: :predicted_counted_object_ambient
+    end
+
+    endpoint OBJECT_COUNT_ONLY_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectCounting,
+        as: :object_count_only_ambient
     end
 
     protected def on_started : Nil
