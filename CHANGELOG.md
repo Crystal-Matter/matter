@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera WebRTC privacy teardown
+
+- Exercise a second synthetic H.264 LiveView session through software privacy:
+  the Camera Provider sends a PrivacyMode End to the Matter.js Requestor,
+  releases the host WebRTC peer, and stops decoded video frames.
+
 ### Matter 1.6 Ambient Context Sensing combined object and crowd forecasts
 
 - Add OC+OI+PRED with host-published object identity and crowd forecasts,
