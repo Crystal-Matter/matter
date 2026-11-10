@@ -335,6 +335,58 @@ describe "Ambient Context Sensing OI+PRED profile" do
     cluster.ambient_context_type_supported.should eq([unknown, person])
     read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
   end
+
+  it "publishes only configured object tags, prunes forecasts, and emits identity events without counts" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown, person], prediction_clock: -> : UInt32? { now })
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+
+    first = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [person], 80_u8)
+    second = Ambient::PredictedActivityStruct.new(190_u32, 210_u32, [unknown], 60_u8)
+    cluster.replace_predicted_activities([first, second])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire.size.should eq(2)
+    wire.first.as_structure.has_key?(2_u8).should be_true
+    wire.first.as_structure.has_key?(3_u8).should be_false
+    wire.first.as_structure.has_key?(4_u8).should be_false
+    Ambient::PredictedActivityStruct.from_tlv(wire.first).ambient_context_type.should eq([person])
+
+    expect_raises(ArgumentError, /supported ambient context tag/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32,
+          [Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /crowd fields/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [person], 50_u8, true),
+      ])
+    end
+    cluster.predicted_activity.should eq([first, second])
+
+    cluster.observe_object(person, true)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
+    started = events.first
+    started[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    started[1].as_structure.has_key?(1_u8).should be_false
+    started[1].as_structure.has_key?(2_u8).should be_false
+    Ambient::AmbientContextDetectStartedEvent.from_tlv(started[1])
+      .ambient_context_detected.ambient_context_sensed.should eq([person])
+    cluster.observe_object(person, false)
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
 end
 
 describe "Ambient Context Sensing OC+PRED profile" do
