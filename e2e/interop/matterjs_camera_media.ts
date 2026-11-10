@@ -12,7 +12,8 @@ import { join } from "node:path";
 
 const [passcodeText, discriminatorText, controlDir] = process.argv.slice(2);
 if (!passcodeText || !discriminatorText || !controlDir) throw new Error("setup and control directory required");
-const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--no-sandbox"] });
+const browser = await chromium.launch({ channel: "chrome", headless: true,
+    args: ["--no-sandbox", "--autoplay-policy=no-user-gesture-required"] });
 const page = await browser.newPage();
 page.on("console", message => console.log("Browser:", message.text()));
 await page.goto("about:blank");
@@ -58,7 +59,24 @@ try {
                     scope.decodedFrames = 0;
                     scope.frameDimensions = "";
                     pc.ontrack = (event: any) => {
-                        if (event.track.kind === "audio") return;
+                        if (event.track.kind === "audio") {
+                            const context = new scope.AudioContext({ sampleRate: 48000 });
+                            const source = context.createMediaStreamSource(new scope.MediaStream([event.track]));
+                            const analyser = context.createAnalyser();
+                            analyser.fftSize = 2048;
+                            const silentOutput = context.createGain();
+                            silentOutput.gain.value = 0;
+                            source.connect(analyser).connect(silentOutput).connect(context.destination);
+                            scope.audioContext = context;
+                            scope.audioEnergy = 0;
+                            const samples = new Float32Array(analyser.fftSize);
+                            scope.audioSampleTimer = scope.setInterval(() => {
+                                analyser.getFloatTimeDomainData(samples);
+                                scope.audioEnergy += samples.reduce((sum, sample) => sum + sample * sample, 0);
+                            }, 50);
+                            void context.resume();
+                            return;
+                        }
                         const video = scope.document.createElement("video");
                         video.autoplay = true;
                         video.muted = true;
@@ -135,8 +153,11 @@ try {
         if (!audio) return false;
         const stats = await audio.getStats();
         return [...stats.values()].some((entry: any) => entry.type === "inbound-rtp" &&
-            entry.kind === "audio" && entry.totalSamplesReceived >= 960 && entry.totalAudioEnergy > 0);
+            entry.kind === "audio" && entry.packetsReceived >= 2) &&
+            (globalThis as any).audioEnergy > 1;
     }), "decoded Opus audio samples");
+    const audioEnergy = await page.evaluate(() => (globalThis as any).audioEnergy);
+    console.log(`Chrome decoded synthetic Opus audio energy ${audioEnergy}`);
     const dimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
     if (dimensions !== "320x180") throw new Error(`Unexpected decoded frame dimensions: ${dimensions}`);
     writeFileSync(join(controlDir, "end-0"), "end");
@@ -152,7 +173,12 @@ try {
     if (await page.evaluate(() => (globalThis as any).decodedFrames) !== count) {
         throw new Error("Video frames continued after End");
     }
-    await page.evaluate(() => (globalThis as any).cameraPeer.close());
+    await page.evaluate(async () => {
+        const scope = globalThis as any;
+        scope.clearInterval(scope.audioSampleTimer);
+        await scope.audioContext.close();
+        scope.cameraPeer.close();
+    });
     console.log(`PASS: Matter.js Requestor received ${count} decoded WebRTC H.264 frames at ${dimensions}; End stopped media`);
 
     // A second live session must end through the Camera privacy path, without
