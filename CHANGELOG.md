@@ -15,6 +15,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and checks host teardown on Matter End. Media dependencies remain outside the
   Crystal library.
 
+### Matter 1.6 Ambient Context Sensing object forecasts
+
+- Add the OI+PRED profile with tagged host forecasts and clock-driven pruning,
+  alongside live object presence and expiry. Omit OC count attributes and
+  fields; exercise the combined wire surface with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing crowd forecasts
 
 - Add OC+PRED host forecasts with required CrowdDetected, optional bounded

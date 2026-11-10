@@ -7,8 +7,85 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, and OC+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, and OI+PRED fixture" do
     device.commission!
+  end
+
+  it "reads OI+PRED tagged object forecasts, presence events, and expiry without count fields" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 8).should eq(20)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", 8)).int_list("AttributeList")
+    [1, 3, 4, 8, 9, 10, 11].each { |id| attributes.should contain(id) }
+    [0, 2, 5, 6, 7].each { |id| attributes.should_not contain(id) }
+    expect_failure(device.read("ambientcontextsensing", "object-count", 8), "UNSUPPORTED_ATTRIBUTE")
+    expect_success(device.read("ambientcontextsensing", "object-identified", 8))
+      .bool("ObjectIdentified").should be_false
+    supported = expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", 8))
+    supported.output.should contain("Tag: 3")
+    expect_success(device.read("ambientcontextsensing", "predicted-activity", 8))
+      .output.should_not contain("StartTimestamp")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "predict-person:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not publish object prediction" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", 8))
+    forecast.output.should contain("StartTimestamp")
+    forecast.output.should contain("EndTimestamp")
+    forecast.output.should contain("AmbientContextType")
+    forecast.output.should contain("Tag: 3")
+    forecast.output.should contain("Confidence: 80")
+    forecast.output.should contain("Confidence: 60")
+    forecast.output.should_not contain("CrowdDetected")
+    forecast.output.should_not contain("CrowdCount")
+
+    File.delete(ack)
+    nonce = "advance-object-prediction-clock:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not advance object prediction clock" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    remaining = expect_success(device.read("ambientcontextsensing", "predicted-activity", 8))
+    remaining.output.should_not contain("Confidence: 80")
+    remaining.output.should contain("Confidence: 60")
+
+    File.delete(ack)
+    nonce = "person-present-pred:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not classify object on predicted endpoint" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    expect_success(device.read("ambientcontextsensing", "object-identified", 8))
+      .bool("ObjectIdentified").should be_true
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 8))
+      .output.should contain("Tag: 3")
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, "8"]))
+    started.output.should contain("Tag: 3")
+    started.output.should_not contain("ObjectCountThresholdReached")
+    started.output.should_not contain("ObjectCount:")
+
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, 8))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break if expect_success(device.read("ambientcontextsensing", "object-identified", 8))
+                 .bool("ObjectIdentified") == false
+      raise "Ambient Context object detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, "8"]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
   end
 
   it "reads OC+PRED crowd-only forecasts and prunes them on clock advance" do

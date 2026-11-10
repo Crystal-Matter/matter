@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+PRED, OI, OC+OI, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+PRED, OI, OI+PRED, OC+OI, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -332,11 +332,12 @@ module Matter
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectIdentification ||
+               @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectCounting+ObjectIdentification, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting+ObjectIdentification, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -406,7 +407,13 @@ module Matter
           raise ArgumentError.new("prediction clock is unavailable") unless now
           raise ArgumentError.new("too many predicted activities") if predictions.size > MAX_PREDICTED_ACTIVITIES
           previous_end : UInt32? = nil
-          supported_tags = @feature_map.human_activity? ? @supported_activity_tags : @supported_sound_tags
+          supported_tags = if @feature_map.human_activity?
+                             @supported_activity_tags
+                           elsif @feature_map.object_identification?
+                             @supported_object_tags
+                           else
+                             @supported_sound_tags
+                           end
           replacement = predictions.map do |prediction|
             raise ArgumentError.new("prediction must start in the future") unless prediction.start_timestamp > now
             if previous_end && prediction.start_timestamp <= previous_end
@@ -524,9 +531,12 @@ module Matter
       end
 
       # Record whether the host currently identifies one configured object.
-      # This standalone profile has no count threshold or count event fields.
+      # The OI and OI+PRED profiles have no count threshold or count event fields.
       def observe_object(tag : SemanticTag, present : Bool) : Nil
-        raise ArgumentError.new("standalone ObjectIdentification profile is not enabled") unless @feature_map == Feature::ObjectIdentification
+        unless @feature_map == Feature::ObjectIdentification ||
+               @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity)
+          raise ArgumentError.new("ObjectIdentification without ObjectCounting profile is not enabled")
+        end
         unless @supported_object_tags.includes?(tag) &&
                tag != SemanticTag.identified_object(IdentifiedObject::Unknown)
           raise ArgumentError.new("object tag is not supported by this sensor")

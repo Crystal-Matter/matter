@@ -17,11 +17,13 @@ module MatterAmbientContext
     MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
     OBJECT_ONLY_ENDPOINT      =           6_u16
     CROWD_FORECAST_ENDPOINT   =           7_u16
+    OBJECT_FORECAST_ENDPOINT  =           8_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @sound_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @crowd_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
+    @object_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Ambient Context",
       vendor_id: Matter::SetupPayload.test_vendor_id,
@@ -91,6 +93,14 @@ module MatterAmbientContext
         as: :predicted_crowd_ambient
     end
 
+    endpoint OBJECT_FORECAST_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectIdentification | Ambient::Feature::PredictedActivity,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        prediction_clock: -> : UInt32? { @object_prediction_now },
+        as: :predicted_object_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -121,6 +131,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-absent:")
             identified_object_ambient.observe_object(PERSON_OBJECT, false)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-present-pred:")
+            predicted_object_ambient.observe_object(PERSON_OBJECT, true)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking:")
             sound_ambient.observe_sound(BARKING_SOUND)
@@ -153,6 +166,19 @@ module MatterAmbientContext
               Ambient::PredictedActivityStruct.crowd(start_at, start_at + 60_u32, true, 80_u8, 12_u8),
               Ambient::PredictedActivityStruct.crowd(start_at + 120_u32, start_at + 180_u32, false, 60_u8),
             ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("predict-person:")
+            start_at = @object_prediction_now + 120_u32
+            predicted_object_ambient.replace_predicted_activities([
+              Ambient::PredictedActivityStruct.new(start_at, start_at + 60_u32,
+                [PERSON_OBJECT], 80_u8),
+              Ambient::PredictedActivityStruct.new(start_at + 120_u32, start_at + 180_u32,
+                [UNKNOWN_OBJECT], 60_u8),
+            ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("advance-object-prediction-clock:")
+            @object_prediction_now += 120_u32
+            predicted_object_ambient.refresh_predicted_activities
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("advance-crowd-prediction-clock:")
             @crowd_prediction_now += 120_u32
