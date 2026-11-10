@@ -859,6 +859,68 @@ describe "Ambient Context Sensing OI-only profile" do
   end
 end
 
+describe "Ambient Context Sensing HA+OI profile" do
+  unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::ObjectIdentification
+
+  it "advertises both independent detection attributes and the union of supported tags" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_object_tags: [unknown_object, person])
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_IDENTIFIED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED,
+     Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT, Ambient::ATTR_HOLD_TIME,
+     Ambient::ATTR_HOLD_TIME_LIMITS].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_AUDIO_CONTEXT_DETECTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should_not contain(id) }
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    read(cluster, Ambient::ATTR_HUMAN_ACTIVITY_DETECTED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    Ambient::SemanticTag.from_tlv(read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED).as_list[0]).should eq(unknown_activity)
+    cluster.ambient_context_type_supported.should eq([unknown_activity, walking, unknown_object, person])
+  end
+
+  it "ends the active modality before switching and expires the second modality" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_object_tags: [unknown_object, person], hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_human_activity(walking)
+    read(cluster, Ambient::ATTR_HUMAN_ACTIVITY_DETECTED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    cluster.observe_object(person, true)
+    read(cluster, Ambient::ATTR_HUMAN_ACTIVITY_DETECTED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([person])
+    events.map(&.[0]).should eq([
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+    ])
+    started = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+    started.ambient_context_detected.ambient_context_sensed.should eq([person])
+    events.last[1].as_structure.has_key?(1_u8).should be_false
+    events.last[1].as_structure.has_key?(2_u8).should be_false
+    deadline = Time.instant + 3.seconds
+    while cluster.object_identified? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([unknown_object])
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+  end
+end
+
 describe "Ambient Context Sensing OC+OI profile" do
   unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
   person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
