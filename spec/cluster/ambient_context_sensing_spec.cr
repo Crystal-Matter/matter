@@ -311,6 +311,32 @@ describe "Ambient Context Sensing HA+PRED profile" do
   end
 end
 
+describe "Ambient Context Sensing OI+PRED profile" do
+  unknown = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  feature_map = Ambient::Feature::ObjectIdentification | Ambient::Feature::PredictedActivity
+
+  it "advertises object identity, tagged forecasts, and detection events without count fields" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown, person], prediction_clock: -> : UInt32? { now })
+
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT].each { |id| attribute_ids(cluster).should_not contain(id) }
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    cluster.ambient_context_type_supported.should eq([unknown, person])
+    read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
+  end
+end
+
 describe "Ambient Context Sensing OC+PRED profile" do
   feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::PredictedActivity
 
