@@ -1,9 +1,12 @@
 require "./support/console"
 require "./support/main"
 
-# Configuration-only Push AV fixture. It does not advertise a media source or
-# start uploads; host integrations provide those callbacks explicitly.
+# Configuration-only Push AV fixture. Its test stream ID exercises the catalog;
+# it has no camera sensor, encoder, or media uploader.
 module MatterPushAvStreamTransport
+  ROOT_ENDPOINT_ID        = 0_u16
+  CATALOG_VIDEO_STREAM_ID = 1_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -16,7 +19,7 @@ module MatterPushAvStreamTransport
 
     storage yaml: "matter_push_av_stream_transport_storage.yml"
 
-    endpoint 0, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint ROOT_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Matter::Cluster::TlsCertificateManagement
       cluster Matter::Cluster::TlsClientManagement
       cluster Matter::Cluster::PushAvStreamTransport
@@ -24,6 +27,12 @@ module MatterPushAvStreamTransport
 
     def console_notes : Array(String)
       ["Matter 1.6 Push AV configuration and fabric-scoped connection catalog"]
+    end
+
+    protected def before_start : Nil
+      push = node.get_cluster!(ROOT_ENDPOINT_ID, Matter::Cluster::PushAvStreamTransport)
+      push.video_stream_exists = ->(id : UInt16) { id == CATALOG_VIDEO_STREAM_ID }
+      super
     end
   end
 end
