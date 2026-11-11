@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV synchronized expiry
+
+- Bind Push AV ExpiryTime validation to an installed root Time Synchronization
+  server when no explicit host clock-validity callback exists. Exercise a
+  TLS-backed five-second connection through official chip-tool allocation,
+  restart, automatic expiry, and TLS reference release.
+
 ### Matter 1.6 Push AV nonempty catalog interoperability
 
 - Verify a fabric-scoped TLS endpoint and Command-triggered CMAF catalog entry
