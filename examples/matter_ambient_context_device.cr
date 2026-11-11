@@ -126,7 +126,7 @@ module MatterAmbientContext
         feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::ObjectIdentification,
         supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
         supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
-        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16),
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
         as: :human_object_ambient
     end
 

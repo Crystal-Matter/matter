@@ -14,6 +14,7 @@ describe "synthetic Ambient Context Sensing examples" do
   it "switches a combined HA+OI detection between independent human and object flags" do
     endpoint = 11
     read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(5)
+    read_int(device, "ambientcontextsensing", "hold-time", "HoldTime", endpoint).should eq(60)
     attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
     [0, 1, 3, 4, 8, 9, 10].each { |id| attributes.should contain(id) }
     [2, 5, 6, 7, 11].each { |id| attributes.should_not contain(id) }
