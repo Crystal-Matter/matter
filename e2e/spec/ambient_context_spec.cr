@@ -7,8 +7,61 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, and OC fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, and HA+OI fixture" do
     device.commission!
+  end
+
+  it "switches a combined HA+OI detection between independent human and object flags" do
+    endpoint = 11
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(5)
+    read_int(device, "ambientcontextsensing", "hold-time", "HoldTime", endpoint).should eq(60)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    [0, 1, 3, 4, 8, 9, 10].each { |id| attributes.should contain(id) }
+    [2, 5, 6, 7, 11].each { |id| attributes.should_not contain(id) }
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(4)
+    expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+      .bool("HumanActivityDetected").should be_false
+    expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+      .bool("ObjectIdentified").should be_false
+
+    ["walking-mixed", "person-present-mixed"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      human = expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+        .bool("HumanActivityDetected")
+      object = expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+        .bool("ObjectIdentified")
+      human.should eq(action == "walking-mixed")
+      object.should eq(action == "person-present-mixed")
+    end
+
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+    started.output.should contain("AmbientContextDetected")
+    started.output.should_not contain("ObjectCountThresholdReached")
+    started.output.should_not contain("ObjectCount:")
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
+
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+                     .bool("ObjectIdentified")
+      raise "Ambient Context mixed object detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+      .bool("HumanActivityDetected").should be_false
   end
 
   it "advertises standalone OC with only universal attributes and no count or detection surface" do

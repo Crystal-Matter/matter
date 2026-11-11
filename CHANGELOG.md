@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing combined human and object detection
+
+- Add the HA+OI profile with independent detection flags, a union of configured
+  semantic tags, one active modality at a time, and count-free events. Verify
+  modality switching and HoldTime expiry with official chip-tool E2E.
+
 ### Matter 1.6 Push AV synchronized expiry
 
 - Bind Push AV ExpiryTime validation to an installed root Time Synchronization
