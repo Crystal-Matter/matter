@@ -144,9 +144,9 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | — | Core plus PM/BU/OCR/SCR/BC/BA/BTW/ST policies |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | TWODCART/USERDEFINED default; opt-in PERZONESENS/FOCUSZONES with chip-tool E2E; host supplies focus/privacy effects and real motion |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices, gated VDO/SNP+WMARK/OSD modification, and host JPEG capture; chip-tool SNP E2E and synthetic WebRTC video E2E; overlay rendering and production media remain |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices, gated VDO/SNP+WMARK/OSD modification, and host JPEG capture; chip-tool SNP E2E and synthetic WebRTC audio/video E2E; overlay rendering and production media remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | Mechanical pan/tilt/zoom combinations, MPRESETS, and DPTZ viewport control including relative moves and mixed profiles; Camera topology and physical host actuation remain |
-| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO and VDO-only signaling with host Peer interface; independent Matter.js/Chrome E2E decodes a synthetic H.264 track over ICE/DTLS/SRTP and checks End and software privacy teardown; production media and official SDK Camera Controller interop remain |
+| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO/VDO signaling with host Peer interface; independent Matter.js/Chrome E2E decodes synthetic H.264 video and Opus audio over ICE/DTLS/SRTP and checks End and software privacy teardown; production media and official SDK Camera Controller interop remain |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
