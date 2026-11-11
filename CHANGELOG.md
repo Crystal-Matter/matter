@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV nonempty catalog interoperability
+
+- Verify a fabric-scoped TLS endpoint and Command-triggered CMAF catalog entry
+  through official chip-tool allocation, lookup, reference protection, restart,
+  and deallocation. The test fixture exposes a logical stream ID without
+  claiming media delivery.
+
 ### Matter 1.6 Camera WebRTC Opus media interoperability
 
 - Extend the optional Camera media host with a synthetic Opus audio track.

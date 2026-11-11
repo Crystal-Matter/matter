@@ -69,11 +69,15 @@ expired connections are removed after restart. Nonzero pre-roll needs a
 Restored `Active` connections become `Inactive` until the host establishes a
 fresh transport.
 
-Official chip-tool E2E currently covers commissioning, metadata, attributes,
-unknown manual trigger and FindTransport commands, and restart of the empty
-connection catalog.
+Official chip-tool E2E covers commissioning, metadata, attributes, unknown
+manual trigger and FindTransport commands, and restart of the empty connection
+catalog. A separate nonempty catalog test provisions a fabric-scoped TLS
+endpoint and allocates a Command-triggered CMAF configuration referencing the
+fixture's logical stream ID. It reads and finds the entry, verifies that the
+referenced TLS endpoint cannot be removed, checks persistence after restart,
+then deallocates and removes the TLS endpoint and root certificate. The logical
+stream has no media backend; this test does not send CMAF segments.
 The focused Crystal specs cover
 TLV tags, command lifecycle, fabric isolation, persistence, validation, and
-host event gating. A camera backend, actual media transport, nonempty
-chip-tool allocation, and certification suite are still needed before claiming
-full Push AV transport interoperability.
+host event gating. A camera backend, actual media transport, and certification
+suite are still needed before claiming full Push AV transport interoperability.
