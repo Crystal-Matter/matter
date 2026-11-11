@@ -2,7 +2,7 @@ require "../spec_helper"
 
 private alias PushAv = Matter::Cluster::PushAvStreamTransport
 
-private def push_av_options(url : String = "https://host.test/ingest") : PushAv::Tlv::TransportOptions
+private def push_av_options(url : String = "https://host.test/ingest/") : PushAv::Tlv::TransportOptions
   cmaf = PushAv::Tlv::CmafContainerOptions.new(PushAv::CmafInterface::Interface1, 1000_u16, 500_u16)
   trigger = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Command, max_pre_roll_len: 0_u16)
   PushAv::Tlv::TransportOptions.new(PushAv::StreamUsage::Recording, 1_u16, url,

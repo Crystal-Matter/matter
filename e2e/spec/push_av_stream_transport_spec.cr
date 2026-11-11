@@ -21,7 +21,7 @@ module PushAvCatalogE2E
     cert.to_der
   end
 
-  def self.allocate_payload(tls_id : Int64, url : String = "https://api.example.com/ingest") : String
+  def self.allocate_payload(tls_id : Int64, url : String = "https://api.example.com/ingest/") : String
     %({"0":{"0":"u:1","3":"u:#{tls_id}","4":"#{url}","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"}},"9":[{"0":"main","1":"u:1"}]}})
   end
 
