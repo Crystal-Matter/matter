@@ -68,7 +68,7 @@ describe "official SDK Push AV Stream Transport" do
     connections.output.should contain("CurrentConnections: 1 entries")
     id = connections.int("ConnectionID") || fail("missing Push AV connection ID\n#{connections.output}")
     expect_failure(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0),
-      "INVALID_IN_STATE")
+      "Cluster-specific error: 0x05")
     expect_success(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_FIND_TRANSPORT,
       %({"0":"u:#{id}"})))
 
