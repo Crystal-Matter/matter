@@ -1,4 +1,4 @@
-/** Matter.js Camera Requestor and independent Chromium WebRTC video receiver. */
+/** Matter.js Camera Requestor and independent Chromium WebRTC media receiver. */
 import { Endpoint, Seconds, ServerNode } from "@matter/main";
 import { CameraControllerDevice } from "@matter/main/devices/camera-controller";
 import { CameraAvStreamManagementClient } from "@matter/main/behaviors/camera-av-stream-management";
@@ -12,7 +12,8 @@ import { join } from "node:path";
 
 const [passcodeText, discriminatorText, controlDir] = process.argv.slice(2);
 if (!passcodeText || !discriminatorText || !controlDir) throw new Error("setup and control directory required");
-const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--no-sandbox"] });
+const browser = await chromium.launch({ channel: "chrome", headless: true,
+    args: ["--no-sandbox", "--autoplay-policy=no-user-gesture-required"] });
 const page = await browser.newPage();
 page.on("console", message => console.log("Browser:", message.text()));
 await page.goto("about:blank");
@@ -45,8 +46,9 @@ try {
         server.events.offer.on((_session, args) => {
             void (async () => {
                 console.log("Matter.js received Camera Offer", args.webRtcSessionId, args.sdp.length);
-                if (args.webRtcSessionId !== expectedSessionId || !args.sdp.includes("m=video")) {
-                    throw new Error("Camera Offer has no matching video media track");
+                if (args.webRtcSessionId !== expectedSessionId || !args.sdp.includes("m=video") ||
+                    (expectedSessionId === 0 && !args.sdp.includes("m=audio"))) {
+                    throw new Error("Camera Offer has no matching audio/video media tracks");
                 }
                 const answer = await page.evaluate(async (sdp: string) => {
                     const scope = globalThis as any;
@@ -57,6 +59,32 @@ try {
                     scope.decodedFrames = 0;
                     scope.frameDimensions = "";
                     pc.ontrack = (event: any) => {
+                        if (event.track.kind === "audio") {
+                            console.log("Audio track received");
+                            const audioElement = scope.document.createElement("audio");
+                            audioElement.autoplay = true;
+                            audioElement.volume = 0.01;
+                            audioElement.srcObject = new scope.MediaStream([event.track]);
+                            scope.document.body.append(audioElement);
+                            void audioElement.play().then(() => console.log("Audio element playing"),
+                                (error: Error) => console.log("Audio element failed", error.message));
+                            const context = new scope.AudioContext({ sampleRate: 48000 });
+                            const source = context.createMediaStreamSource(new scope.MediaStream([event.track]));
+                            const analyser = context.createAnalyser();
+                            analyser.fftSize = 2048;
+                            const silentOutput = context.createGain();
+                            silentOutput.gain.value = 0;
+                            source.connect(analyser).connect(silentOutput).connect(context.destination);
+                            scope.audioContext = context;
+                            scope.audioEnergy = 0;
+                            const samples = new Float32Array(analyser.fftSize);
+                            scope.audioSampleTimer = scope.setInterval(() => {
+                                analyser.getFloatTimeDomainData(samples);
+                                scope.audioEnergy += samples.reduce((sum, sample) => sum + sample * sample, 0);
+                            }, 50);
+                            void context.resume();
+                            return;
+                        }
                         const video = scope.document.createElement("video");
                         video.autoplay = true;
                         video.muted = true;
@@ -104,6 +132,10 @@ try {
     const address = camera.peerAddress;
     const endpoint = camera.parts.get(1);
     if (!address || !endpoint) throw new Error("Commissioned Camera endpoint/address missing");
+    const audioStream = await endpoint.commandsOf(CameraAvStreamManagementClient).audioStreamAllocate({
+        streamUsage: StreamUsage.LiveView, audioCodec: CameraAvStreamManagement.AudioCodec.Opus,
+        channelCount: 1, sampleRate: 48000, bitRate: 64000, bitDepth: 16,
+    });
     const stream = await endpoint.commandsOf(CameraAvStreamManagementClient).videoStreamAllocate({
         streamUsage: StreamUsage.LiveView, videoCodec: CameraAvStreamManagement.VideoCodec.H264,
         minFrameRate: 15, maxFrameRate: 30,
@@ -114,14 +146,26 @@ try {
     await requestor.act(agent => agent.get(WebRtcTransportRequestorServer).upsertSession({
         id: 0, peerNodeId: address.nodeId, peerEndpointId: EndpointNumber(1),
         streamUsage: StreamUsage.LiveView, metadataEnabled: false,
-        videoStreams: [stream.videoStreamId], fabricIndex: address.fabricIndex,
+        audioStreams: [audioStream.audioStreamId], videoStreams: [stream.videoStreamId],
+        fabricIndex: address.fabricIndex,
     }));
     const response = await provider.solicitOffer({
         streamUsage: StreamUsage.LiveView, originatingEndpointId: EndpointNumber(1),
-        videoStreams: [stream.videoStreamId],
+        audioStreams: [audioStream.audioStreamId], videoStreams: [stream.videoStreamId],
     });
     if (response.webRtcSessionId !== 0) throw new Error("Unexpected Provider session ID");
     await waitFor(async () => await page.evaluate(() => (globalThis as any).decodedFrames >= 2), "two decoded frames");
+    await waitFor(async () => await page.evaluate(async () => {
+        const pc = (globalThis as any).cameraPeer as RTCPeerConnection;
+        const audio = pc.getReceivers().find(receiver => receiver.track.kind === "audio");
+        if (!audio) return false;
+        const stats = await audio.getStats();
+        return [...stats.values()].some((entry: any) => entry.type === "inbound-rtp" &&
+            entry.kind === "audio" && entry.packetsReceived >= 2) &&
+            (globalThis as any).audioEnergy > 1;
+    }), "decoded Opus audio samples");
+    const audioEnergy = await page.evaluate(() => (globalThis as any).audioEnergy);
+    console.log(`Chrome decoded synthetic Opus audio energy ${audioEnergy}`);
     const dimensions = await page.evaluate(() => (globalThis as any).frameDimensions);
     if (dimensions !== "320x180") throw new Error(`Unexpected decoded frame dimensions: ${dimensions}`);
     writeFileSync(join(controlDir, "end-0"), "end");
@@ -137,7 +181,12 @@ try {
     if (await page.evaluate(() => (globalThis as any).decodedFrames) !== count) {
         throw new Error("Video frames continued after End");
     }
-    await page.evaluate(() => (globalThis as any).cameraPeer.close());
+    await page.evaluate(async () => {
+        const scope = globalThis as any;
+        scope.clearInterval(scope.audioSampleTimer);
+        await scope.audioContext.close();
+        scope.cameraPeer.close();
+    });
     console.log(`PASS: Matter.js Requestor received ${count} decoded WebRTC H.264 frames at ${dimensions}; End stopped media`);
 
     // A second live session must end through the Camera privacy path, without
