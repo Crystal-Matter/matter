@@ -20,6 +20,7 @@ module MatterPushAvStreamTransport
     storage yaml: "matter_push_av_stream_transport_storage.yml"
 
     endpoint ROOT_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Matter::Cluster::TimeSynchronization
       cluster Matter::Cluster::TlsCertificateManagement
       cluster Matter::Cluster::TlsClientManagement
       cluster Matter::Cluster::PushAvStreamTransport
