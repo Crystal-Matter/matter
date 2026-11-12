@@ -1,6 +1,7 @@
 require "./e2e_helper"
 
-private CON_CLUSTER = "deviceenergymanagement"
+private CON_CLUSTER              = "deviceenergymanagement"
+private CON_REQUEST_LEAD_SECONDS = 3_600_i64
 
 private def constrain(device : E2E::Device, start_time : Int64, duration : Int32,
                       power : Int32) : E2E::Result
@@ -17,7 +18,10 @@ describe "Matter 1.6 Device Energy Management CON interoperability" do
     before = expect_success(device.read(CON_CLUSTER, "forecast"))
     original_start = before.int("StartTime") || raise "missing StartTime"
     before.int("ForecastID").should eq(1_i64)
-    requested = original_start - 3_600_i64
+    # The fixture may have started long before this spec in the full E2E suite.
+    # Build the valid constraint from the command-time clock so it stays future-dated.
+    requested = Time.utc.to_unix - Matter::Cluster::DeviceEnergyManagement::MATTER_EPOCH_UNIX_SECONDS +
+                CON_REQUEST_LEAD_SECONDS
     expect_failure(constrain(device, requested, 86_401, 2_500), "CONSTRAINT_ERROR")
     expect_success(constrain(device, requested, 1_200, 2_500))
     changed = expect_success(device.read(CON_CLUSTER, "forecast"))

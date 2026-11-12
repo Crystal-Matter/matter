@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Device Energy Management constraint E2E timing
+
+- Derive the valid CON request start from the current Matter clock in the
+  official chip-tool E2E. This keeps its future-time validation meaningful
+  when the synthetic fixture has been running for more than an hour.
+
 ### Matter 1.6 Ambient Context Sensing combined human and sound detection
 
 - Add HA+AUD with independent human-activity and sound flags, a union of
