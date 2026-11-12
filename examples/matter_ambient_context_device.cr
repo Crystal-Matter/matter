@@ -22,6 +22,7 @@ module MatterAmbientContext
     OBJECT_COUNT_ONLY_ENDPOINT       =          10_u16
     HUMAN_OBJECT_ENDPOINT            =          11_u16
     HUMAN_OBJECT_FORECAST_ENDPOINT   =          12_u16
+    HUMAN_SOUND_ENDPOINT             =          13_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -142,6 +143,15 @@ module MatterAmbientContext
         as: :predicted_human_object_ambient
     end
 
+    endpoint HUMAN_SOUND_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::SoundIdentification,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :human_sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -169,6 +179,9 @@ module MatterAmbientContext
           elsif nonce.starts_with?("walking-mixed-pred:")
             predicted_human_object_ambient.observe_human_activity(WALKING_ACTIVITY)
             File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-human-sound:")
+            human_sound_ambient.observe_human_activity(WALKING_ACTIVITY)
+            File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present-mixed:")
             human_object_ambient.observe_object(PERSON_OBJECT, true)
             File.write("#{path}.ack", nonce)
@@ -194,6 +207,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking:")
             sound_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-human-sound:")
+            human_sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("predict-walking:")
             first_start = @prediction_now + 120_u32
