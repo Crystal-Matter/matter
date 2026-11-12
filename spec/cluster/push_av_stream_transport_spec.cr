@@ -2,10 +2,10 @@ require "../spec_helper"
 
 private alias PushAv = Matter::Cluster::PushAvStreamTransport
 
-private def push_av_options : PushAv::Tlv::TransportOptions
+private def push_av_options(url : String = "https://host.test/ingest/") : PushAv::Tlv::TransportOptions
   cmaf = PushAv::Tlv::CmafContainerOptions.new(PushAv::CmafInterface::Interface1, 1000_u16, 500_u16)
   trigger = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Command, max_pre_roll_len: 0_u16)
-  PushAv::Tlv::TransportOptions.new(PushAv::StreamUsage::Recording, 1_u16, "https://host.test/ingest",
+  PushAv::Tlv::TransportOptions.new(PushAv::StreamUsage::Recording, 1_u16, url,
     trigger, PushAv::IngestMethod::CmafIngest, PushAv::Tlv::ContainerOptions.new(PushAv::ContainerFormat::Cmaf, cmaf),
     video_streams: [PushAv::Tlv::VideoStream.new("main", 1_u16)])
 end
@@ -21,6 +21,22 @@ private def push_av_fixture : PushAv
 end
 
 describe PushAv do
+  it "rejects CMAF ingest URLs with query, fragment, or missing trailing slash" do
+    cluster = push_av_fixture
+    invalid = [
+      "https://host.test/ingest/?bad=query",
+      "https://host.test/ingest/#fragment",
+      "https://host.test/ingest",
+    ]
+    invalid.each do |url|
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options(url)))
+        .as(Matter::InteractionModel::Status).cluster_status.should eq(PushAv::StatusCode::InvalidUrl.value)
+    end
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options("https://host.test/ingest/")))
+      .should be_a(PushAv::Tlv::AllocateResponse)
+  end
+
   it "declares the mandatory revision-2 attributes, commands, and events" do
     cluster = PushAv.new
     cluster.cluster_revision.should eq(2_u16)

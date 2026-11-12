@@ -9,7 +9,7 @@ private def nullable_push_av_options(video : TLV::FieldState(UInt16) = TLV::Fiel
   selected_trigger = trigger || PushAvNullable::Tlv::TriggerOptions.new(PushAvNullable::TriggerType::Command,
     max_pre_roll_len: 0_u16)
   PushAvNullable::Tlv::TransportOptions.new(PushAvNullable::StreamUsage::Recording, 1_u16,
-    "https://host.test/ingest", selected_trigger, PushAvNullable::IngestMethod::CmafIngest,
+    "https://host.test/ingest/", selected_trigger, PushAvNullable::IngestMethod::CmafIngest,
     PushAvNullable::Tlv::ContainerOptions.new(PushAvNullable::ContainerFormat::Cmaf, cmaf),
     video_stream_id: video, audio_stream_id: audio)
 end

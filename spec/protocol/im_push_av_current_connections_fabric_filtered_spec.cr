@@ -32,7 +32,7 @@ private def push_av_fabric_options : FabricPushAv::Tlv::TransportOptions
   cmaf = FabricPushAv::Tlv::CmafContainerOptions.new(FabricPushAv::CmafInterface::Interface1, 1000_u16, 500_u16)
   trigger = FabricPushAv::Tlv::TriggerOptions.new(FabricPushAv::TriggerType::Command, max_pre_roll_len: 0_u16)
   FabricPushAv::Tlv::TransportOptions.new(FabricPushAv::StreamUsage::Recording, 1_u16,
-    "https://host.test/ingest", trigger, FabricPushAv::IngestMethod::CmafIngest,
+    "https://host.test/ingest/", trigger, FabricPushAv::IngestMethod::CmafIngest,
     FabricPushAv::Tlv::ContainerOptions.new(FabricPushAv::ContainerFormat::Cmaf, cmaf),
     video_streams: [FabricPushAv::Tlv::VideoStream.new("main", 1_u16)])
 end

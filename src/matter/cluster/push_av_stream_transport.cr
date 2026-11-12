@@ -523,7 +523,8 @@ module Matter
         return false unless url.bytesize.in?(MIN_URL_BYTES..MAX_URL_BYTES)
         uri = URI.parse(url)
         host = uri.host
-        uri.scheme == "https" && !host.nil? && !host.empty?
+        uri.scheme == "https" && !host.nil? && !host.empty? &&
+          uri.path.ends_with?("/") && uri.query.nil? && uri.fragment.nil?
       rescue URI::Error
         false
       end

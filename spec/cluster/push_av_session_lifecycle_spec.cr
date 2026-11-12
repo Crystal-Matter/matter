@@ -6,7 +6,7 @@ private def session_options : PushAvSession::Tlv::TransportOptions
   trigger = PushAvSession::Tlv::TriggerOptions.new(PushAvSession::TriggerType::Command, max_pre_roll_len: 0_u16)
   cmaf = PushAvSession::Tlv::CmafContainerOptions.new(PushAvSession::CmafInterface::Interface1, 1000_u16, 500_u16)
   PushAvSession::Tlv::TransportOptions.new(PushAvSession::StreamUsage::Recording, 1_u16,
-    "https://host.test/ingest", trigger, PushAvSession::IngestMethod::CmafIngest,
+    "https://host.test/ingest/", trigger, PushAvSession::IngestMethod::CmafIngest,
     PushAvSession::Tlv::ContainerOptions.new(PushAvSession::ContainerFormat::Cmaf, cmaf),
     video_streams: [PushAvSession::Tlv::VideoStream.new("main", 1_u16)])
 end

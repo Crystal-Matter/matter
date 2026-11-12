@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV CMAF ingest URL validation
+
+- Reject CMAF ingest base URLs with a query, fragment, or missing trailing
+  slash using InvalidURL. Verify rejection and valid allocation with official
+  chip-tool E2E, alongside focused Crystal specs.
+
 ### Matter 1.6 Ambient Context Sensing combined human and object forecasts
 
 - Add HA+OI+PRED with host forecasts across both configured semantic-tag
