@@ -125,7 +125,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
 | 0x0430 | Soil Measurement Cluster | 1 | 1 | — | Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E |
-| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | Opt-in HA, HA+OI, HA+PRED, OI, OI+PRED, AUD, AUD+PRED, OC-only universal attrs, OC+PRED crowd forecasts, combined OC+OI, or OC+OI+PRED provisional profiles; host owns prediction and physical sensing |
+| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | Opt-in HA, HA+OI, HA+PRED, HA+OI+PRED, OI, OI+PRED, AUD, AUD+PRED, OC-only universal attrs, OC+PRED crowd forecasts, combined OC+OI, or OC+OI+PRED provisional profiles; host owns prediction and physical sensing |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
