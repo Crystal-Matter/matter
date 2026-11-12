@@ -133,8 +133,10 @@ describe "official SDK Push AV Stream Transport" do
       ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
     tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
 
-    expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
-      PushAvCatalogE2E.allocate_payload(tls_id, metadata_enabled: false)), "INVALID_COMMAND")
+    [false, true].each do |enabled|
+      expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, metadata_enabled: enabled)), "INVALID_COMMAND")
+    end
     expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
       .should contain("CurrentConnections: 0 entries")
     expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))

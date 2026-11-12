@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV Metadata feature gating
+
+- Reject CMAF `MetadataEnabled` when the Metadata feature is absent, including
+  an explicitly false value, with the required InvalidCommand status. Exercise
+  both present values through official chip-tool E2E.
+
 ### Matter 1.6 Push AV CMAF ingest URL validation
 
 - Reject CMAF ingest base URLs with a query, fragment, or missing trailing

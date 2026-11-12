@@ -12,8 +12,8 @@ private def push_av_options(url : String = "https://host.test/ingest/",
     video_streams: [PushAv::Tlv::VideoStream.new("main", 1_u16)])
 end
 
-private def push_av_fixture : PushAv
-  cluster = PushAv.new
+private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) : PushAv
+  cluster = PushAv.new(feature_map: features)
   cluster.request_is_case_session = true
   cluster.request_fabric_index = 1_u8
   cluster.fabric_installed = ->(fabric : UInt8) { fabric.in?(1_u8..2_u8) }
@@ -25,12 +25,18 @@ end
 describe PushAv do
   it "rejects MetadataEnabled presence when the Metadata feature is absent" do
     cluster = push_av_fixture
-    result = cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(
-      push_av_options(metadata_enabled: false))).as(Matter::InteractionModel::Status)
-    result.status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    [false, true].each do |enabled|
+      result = cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(
+        push_av_options(metadata_enabled: enabled))).as(Matter::InteractionModel::Status)
+      result.status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
     cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
     cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options))
       .should be_a(PushAv::Tlv::AllocateResponse)
+
+    with_metadata = push_av_fixture(PushAv::Feature::Metadata)
+    with_metadata.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(
+      push_av_options(metadata_enabled: false))).should be_a(PushAv::Tlv::AllocateResponse)
   end
 
   it "rejects CMAF ingest URLs with query, fragment, or missing trailing slash" do
