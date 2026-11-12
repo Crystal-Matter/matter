@@ -63,8 +63,11 @@ preserved on wire and in storage. MotionZones is required for Motion triggers;
 MotionSensitivity is required without PerZoneSensitivity, and explicit Null is
 valid for both. An optional
 `ExpiryTime` is treated as a relative TTL in seconds; the host must attest to
-clock validity with `time_valid` before accepting it. The deadline is saved and
-expired connections are removed after restart. Nonzero pre-roll needs a
+clock validity with `time_valid` before accepting it. When root Time
+Synchronization is installed and the host has not supplied its own callback,
+the device runtime accepts ExpiryTime only after that cluster has synchronized
+UTC. The deadline is saved and expired connections are removed after restart.
+Nonzero pre-roll needs a
 `pre_roll_valid` host callback tied to the actual stream keyframe interval.
 Restored `Active` connections become `Inactive` until the host establishes a
 fresh transport.
@@ -77,6 +80,9 @@ fixture's logical stream ID. It reads and finds the entry, verifies that the
 referenced TLS endpoint cannot be removed, checks persistence after restart,
 then deallocates and removes the TLS endpoint and root certificate. The logical
 stream has no media backend; this test does not send CMAF segments.
+The official chip-tool E2E also sets root UTC, allocates a five-second
+connection, restarts the device, and observes expiry plus release of the TLS
+endpoint reference.
 The focused Crystal specs cover
 TLV tags, command lifecycle, fabric isolation, persistence, validation, and
 host event gating. A camera backend, actual media transport, and certification
