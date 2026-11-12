@@ -2,8 +2,10 @@ require "../spec_helper"
 
 private alias PushAv = Matter::Cluster::PushAvStreamTransport
 
-private def push_av_options(url : String = "https://host.test/ingest/") : PushAv::Tlv::TransportOptions
-  cmaf = PushAv::Tlv::CmafContainerOptions.new(PushAv::CmafInterface::Interface1, 1000_u16, 500_u16)
+private def push_av_options(url : String = "https://host.test/ingest/",
+                            metadata_enabled : Bool? = nil) : PushAv::Tlv::TransportOptions
+  cmaf = PushAv::Tlv::CmafContainerOptions.new(PushAv::CmafInterface::Interface1, 1000_u16, 500_u16,
+    metadata_enabled: metadata_enabled)
   trigger = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Command, max_pre_roll_len: 0_u16)
   PushAv::Tlv::TransportOptions.new(PushAv::StreamUsage::Recording, 1_u16, url,
     trigger, PushAv::IngestMethod::CmafIngest, PushAv::Tlv::ContainerOptions.new(PushAv::ContainerFormat::Cmaf, cmaf),
@@ -21,6 +23,16 @@ private def push_av_fixture : PushAv
 end
 
 describe PushAv do
+  it "rejects MetadataEnabled presence when the Metadata feature is absent" do
+    cluster = push_av_fixture
+    result = cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(
+      push_av_options(metadata_enabled: false))).as(Matter::InteractionModel::Status)
+    result.status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options))
+      .should be_a(PushAv::Tlv::AllocateResponse)
+  end
+
   it "rejects CMAF ingest URLs with query, fragment, or missing trailing slash" do
     cluster = push_av_fixture
     invalid = [
