@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing combined human and sound detection
+
+- Add HA+AUD with independent human-activity and sound flags, a union of
+  configured semantic tags, one active modality at a time, and count-free
+  detection events. Verify modality switching and HoldTime expiry with
+  official chip-tool E2E.
+
 ### Matter 1.6 Push AV CMAF ingest URL validation
 
 - Reject CMAF ingest base URLs with a query, fragment, or missing trailing
