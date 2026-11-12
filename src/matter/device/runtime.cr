@@ -1498,6 +1498,11 @@ module Matter
         push.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
         push.tls_endpoint_exists = ->(fabric : UInt8, id : UInt16) { tls.has_endpoint?(fabric, id) }
         push.on_reference_change = ->(fabric : UInt8, id : UInt16, delta : Int8) { tls.change_reference_count(fabric, id, delta) }
+        unless push.time_valid
+          if time_sync = @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization)
+            push.time_valid = -> { !time_sync.matter_epoch_seconds.nil? }
+          end
+        end
         unless push.privacy_allows
           push.privacy_allows = ->(usage : Cluster::PushAvStreamTransport::StreamUsage) do
             if camera = @node.get_cluster(Cluster::CameraAvStreamManagement)
