@@ -472,7 +472,7 @@ module Matter
         cmaf = options.container_options.cmaf
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless cmaf.cmaf_interface.interface1? && cmaf.segment_duration.in?(MIN_SEGMENT_DURATION..MAX_SEGMENT_DURATION) && cmaf.chunk_duration <= cmaf.segment_duration // 2
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if cmaf.track_name.try { |name| name.bytesize < 1 || name.bytesize > MAX_STREAM_NAME_BYTES }
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if cmaf.metadata_enabled && !feature_map.metadata?
+        return InteractionModel::Status.invalid_command if !cmaf.metadata_enabled.nil? && !feature_map.metadata?
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidUrl) unless valid_url?(options.url)
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTime) if options.expiry_time && @time_valid.try(&.call) != true
 

@@ -46,6 +46,9 @@ Hosts without that cluster should set `privacy_allows` to their own policy
 before enabling manual capture. A denied request returns `InvalidInState`.
 The optional Metadata and PerZoneSensitivity feature bits are not enabled by
 the example.
+`CMAFContainerOptions.MetadataEnabled` must be omitted when the Metadata
+feature is absent. An explicitly false value is still present and returns
+`InvalidCommand`; a feature-enabled host may set either boolean value.
 
 Allocation starts `Inactive`. `CurrentConnections` omits TransportOptions so
 it is safe on transports without Large Message support; `FindTransport`
