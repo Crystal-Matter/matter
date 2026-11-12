@@ -5,7 +5,7 @@ private alias PushAvRuntime = Matter::Cluster::PushAvStreamTransport
 private def runtime_options(trigger : PushAvRuntime::Tlv::TriggerOptions) : PushAvRuntime::Tlv::TransportOptions
   cmaf = PushAvRuntime::Tlv::CmafContainerOptions.new(PushAvRuntime::CmafInterface::Interface1, 1000_u16, 500_u16)
   PushAvRuntime::Tlv::TransportOptions.new(PushAvRuntime::StreamUsage::Recording, 1_u16,
-    "https://host.test/ingest", trigger, PushAvRuntime::IngestMethod::CmafIngest,
+    "https://host.test/ingest/", trigger, PushAvRuntime::IngestMethod::CmafIngest,
     PushAvRuntime::Tlv::ContainerOptions.new(PushAvRuntime::ContainerFormat::Cmaf, cmaf),
     video_streams: [PushAvRuntime::Tlv::VideoStream.new("main", 1_u16)])
 end

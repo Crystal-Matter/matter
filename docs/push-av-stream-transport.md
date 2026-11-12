@@ -7,6 +7,11 @@ Connection records use `Storage::Record` and the device persistence backend.
 The runtime wires fabric ownership and TLS endpoint references, and erases a
 fabric's records when it leaves.
 
+For CMAF ingest, `TransportOptions.URL` is an HTTPS base URL with a nonempty
+host and a path ending in `/`. A query or fragment is invalid; allocation
+returns the cluster's `InvalidURL` status without creating a connection. The
+host media implementation appends its segment paths to this base URL.
+
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera
 endpoint. See
@@ -78,7 +83,9 @@ catalog. A separate nonempty catalog test provisions a fabric-scoped TLS
 endpoint and allocates a Command-triggered CMAF configuration referencing the
 fixture's logical stream ID. It reads and finds the entry, verifies that the
 referenced TLS endpoint cannot be removed, checks persistence after restart,
-then deallocates and removes the TLS endpoint and root certificate. The logical
+then deallocates and removes the TLS endpoint and root certificate. The official
+chip-tool test also rejects malformed CMAF ingest base URLs and accepts a valid
+trailing-slash base URL. The logical
 stream has no media backend; this test does not send CMAF segments.
 The official chip-tool E2E also sets root UTC, allocates a five-second
 connection, restarts the device, and observes expiry plus release of the TLS

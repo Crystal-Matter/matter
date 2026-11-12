@@ -21,12 +21,12 @@ module PushAvCatalogE2E
     cert.to_der
   end
 
-  def self.allocate_payload(tls_id : Int64) : String
-    %({"0":{"0":"u:1","3":"u:#{tls_id}","4":"https://api.example.com/ingest","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"}},"9":[{"0":"main","1":"u:1"}]}})
+  def self.allocate_payload(tls_id : Int64, url : String = "https://api.example.com/ingest/") : String
+    %({"0":{"0":"u:1","3":"u:#{tls_id}","4":"#{url}","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"}},"9":[{"0":"main","1":"u:1"}]}})
   end
 
   def self.expiring_payload(tls_id : Int64, seconds : UInt32) : String
-    %({"0":{"0":"u:1","3":"u:#{tls_id}","4":"https://api.example.com/ingest","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"}},"8":"u:#{seconds}","9":[{"0":"main","1":"u:1"}]}})
+    %({"0":{"0":"u:1","3":"u:#{tls_id}","4":"https://api.example.com/ingest/","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"}},"8":"u:#{seconds}","9":[{"0":"main","1":"u:1"}]}})
   end
 
   def self.command(device : E2E::Device, id : UInt32, payload : String) : E2E::Result
@@ -83,6 +83,41 @@ describe "official SDK Push AV Stream Transport" do
     expect_success(device.invoke("pushavstreamtransport", "deallocate-push-transport", [id.to_s], endpoint: 0))
     expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
       .should contain("CurrentConnections: 0 entries")
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
+
+  it "rejects invalid CMAF ingest base URLs before allocating a connection" do
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    invalid = [
+      "http://api.example.com/ingest/",
+      "https:///ingest/",
+      "https://api.example.com/ingest/?bad=query",
+      "https://api.example.com/ingest/#fragment",
+      "https://api.example.com/ingest",
+    ]
+    invalid.each do |url|
+      result = PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, url))
+      result.success?.should be_false
+      result.output.should contain("Cluster-specific error: 0x04")
+      expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+        .should contain("CurrentConnections: 0 entries")
+    end
+
+    expect_success(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+      PushAvCatalogE2E.allocate_payload(tls_id, "https://api.example.com/ingest/")))
+    connections = expect_success(device.read("pushavstreamtransport", "current-connections", 0))
+    connections.output.should contain("CurrentConnections: 1 entries")
+    id = connections.int("ConnectionID") || fail("missing Push AV connection ID\n#{connections.output}")
+    expect_success(device.invoke("pushavstreamtransport", "deallocate-push-transport", [id.to_s], endpoint: 0))
     expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
     expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
   end
