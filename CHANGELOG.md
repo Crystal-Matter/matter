@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV stream field representation
+
+- Reject AllocatePushTransport and ModifyPushTransport requests that contain
+  neither a legacy stream ID nor a nonempty revision-2 stream list, or mix both
+  representations. Verify InvalidCommand and unchanged catalog state through
+  official chip-tool E2E and focused specs.
+
 ### Matter 1.6 Push AV Metadata feature gating
 
 - Reject CMAF `MetadataEnabled` when the Metadata feature is absent, including

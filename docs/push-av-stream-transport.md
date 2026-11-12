@@ -56,9 +56,12 @@ returns complete options and returns `NotFound` when no connection matches.
 All commands require a CASE session and expose only
 connections on the caller's fabric. Active status and manual triggering require
 host callbacks, so the configuration-only example cannot claim successful
-media transmission. Revision 1 explicit stream ID fields are accepted
-alongside revision 2 multi-stream lists, and responses populate the deprecated
-IDs from the first list entry. Revision 1 stream ID fields preserve absent,
+media transmission. Revision 1 explicit stream ID fields are accepted as an
+alternative to revision 2 multi-stream lists. Incoming Allocate and Modify
+requests must contain a nonempty stream list or a legacy stream ID field, but
+not both representations; otherwise they return `InvalidCommand` without
+changing the catalog. Responses populate the deprecated IDs from the first
+list entry. Revision 1 stream ID fields preserve absent,
 explicit Null, and concrete values separately. An explicit Null asks the host
 to choose an existing stream through `select_video_stream` or
 `select_audio_stream`. The callback receives the fabric index and stream usage;
