@@ -426,7 +426,7 @@ module Matter
       end
 
       private def valid_stream_fields?(options : Tlv::TransportOptions) : Bool
-        has_lists = options.video_streams.try(&.any?) == true || options.audio_streams.try(&.any?) == true
+        has_lists = options.video_streams.try(&.present?) == true || options.audio_streams.try(&.present?) == true
         has_legacy = !options.video_stream_id_state.absent? || !options.audio_stream_id_state.absent?
         has_lists != has_legacy
       end
