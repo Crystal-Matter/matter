@@ -14,6 +14,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   representations. Verify InvalidCommand and unchanged catalog state through
   official chip-tool E2E and focused specs.
 
+### Matter 1.6 Ambient Context Sensing combined human object and sound detection
+
+- Add HA+OI+AUD with three independent detection flags, configured semantic-tag
+  union, one active modality at a time, and count-free events. Verify switching
+  and HoldTime expiry with official chip-tool E2E.
+
+### Matter 1.6 Ambient Context Sensing combined object and sound forecasts
+
+- Add OI+AUD+PRED with host forecasts across both configured semantic-tag
+  modalities, clock pruning, live object/sound switching, and count-free wire
+  fields. Verify the profile with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing combined object and sound detection
 
 - Add OI+AUD with independent object and sound flags, a union of configured
