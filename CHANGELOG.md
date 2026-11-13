@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing combined human and sound forecasts
+
+- Add HA+AUD+PRED with host forecasts across both configured semantic-tag
+  modalities, clock pruning, live modality switching, and count-free wire
+  fields. Verify the profile with official chip-tool E2E.
+
 ### Matter 1.6 Push AV Metadata feature gating
 
 - Reject CMAF `MetadataEnabled` when the Metadata feature is absent, including
