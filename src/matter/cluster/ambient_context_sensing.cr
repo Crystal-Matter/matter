@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+OI, HA+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, OI, OI+AUD, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+OI, HA+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, OI, OI+AUD, OI+AUD+PRED, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -337,6 +337,7 @@ module Matter
                @feature_map == (Feature::HumanActivity | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectIdentification ||
                @feature_map == (Feature::ObjectIdentification | Feature::SoundIdentification) ||
+               @feature_map == (Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectCounting ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
@@ -344,7 +345,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
