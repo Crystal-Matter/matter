@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing combined human object and sound forecasts
+
+- Add HA+OI+AUD+PRED with host forecasts across all three configured tag
+  modalities, clock pruning, live switching, and count-free wire fields.
+  Verify the profile with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing combined human object and sound detection
 
 - Add HA+OI+AUD with three independent detection flags, configured semantic-tag
