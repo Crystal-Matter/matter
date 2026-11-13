@@ -7,8 +7,81 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, and HA+OI+AUD fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, and HA+OI+AUD+PRED fixture" do
     device.commission!
+  end
+
+  it "reads HA+OI+AUD+PRED forecasts from all three modalities and live switching" do
+    endpoint = 18
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(29)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    [0, 1, 2, 3, 4, 8, 9, 10, 11].each { |id| attributes.should contain(id) }
+    [5, 6, 7].each { |id| attributes.should_not contain(id) }
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(6)
+    expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint))
+      .output.should_not contain("StartTimestamp")
+
+    ["predict-human-object-sound", "advance-human-object-sound-prediction-clock",
+     "walking-human-object-sound-pred", "person-present-human-object-sound-pred",
+     "barking-human-object-sound-pred"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      case action
+      when "predict-human-object-sound"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.should contain("StartTimestamp")
+        forecast.should contain("AmbientContextType")
+        forecast.should contain("Confidence: 80")
+        forecast.should contain("Confidence: 70")
+        forecast.should contain("Confidence: 60")
+        forecast.should_not contain("CrowdDetected")
+        forecast.should_not contain("CrowdCount")
+      when "advance-human-object-sound-prediction-clock"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.should_not contain("Confidence: 80")
+        forecast.should contain("Confidence: 70")
+        forecast.should contain("Confidence: 60")
+      else
+        human = expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+          .bool("HumanActivityDetected")
+        object = expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+          .bool("ObjectIdentified")
+        sound = expect_success(device.read("ambientcontextsensing", "audio-context-detected", endpoint))
+          .bool("AudioContextDetected")
+        human.should eq(action == "walking-human-object-sound-pred")
+        object.should eq(action == "person-present-human-object-sound-pred")
+        sound.should eq(action == "barking-human-object-sound-pred")
+      end
+    end
+
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+    started.output.should contain("AmbientContextDetected")
+    started.output.should_not contain("ObjectCountThresholdReached")
+    started.output.should_not contain("ObjectCount:")
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "audio-context-detected", endpoint))
+                     .bool("AudioContextDetected")
+      raise "Ambient Context HA+OI+AUD+PRED sound detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+      .bool("HumanActivityDetected").should be_false
+    expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+      .bool("ObjectIdentified").should be_false
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
   end
 
   it "switches HA+OI+AUD live detection among all three modalities without count fields" do
