@@ -28,6 +28,7 @@ module MatterAmbientContext
     OBJECT_SOUND_FORECAST_ENDPOINT   =          16_u16
     HUMAN_OBJECT_SOUND_ENDPOINT      =          17_u16
     HUMAN_OBJECT_SOUND_PRED_ENDPOINT =          18_u16
+    HUMAN_COUNTED_OBJECT_ENDPOINT    =          19_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -211,6 +212,17 @@ module MatterAmbientContext
         as: :predicted_human_object_sound_ambient
     end
 
+    endpoint HUMAN_COUNTED_OBJECT_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting |
+                     Ambient::Feature::ObjectIdentification,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        object_count_config: Ambient::ObjectCountConfig.new(PERSON_OBJECT, 2_u16),
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :human_counted_object_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -250,6 +262,9 @@ module MatterAmbientContext
           elsif nonce.starts_with?("walking-human-object-sound-pred:")
             predicted_human_object_sound_ambient.observe_human_activity(WALKING_ACTIVITY)
             File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-human-counted-object:")
+            human_counted_object_ambient.observe_human_activity(WALKING_ACTIVITY)
+            File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present-mixed:")
             human_object_ambient.observe_object(PERSON_OBJECT, true)
             File.write("#{path}.ack", nonce)
@@ -275,6 +290,10 @@ module MatterAmbientContext
           elsif nonce.starts_with?("person-count-pred:")
             count = nonce.split(':')[1].to_u16
             predicted_counted_object_ambient.observe_object_count(PERSON_OBJECT, count)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-count-human:")
+            count = nonce.split(':')[1].to_u16
+            human_counted_object_ambient.observe_object_count(PERSON_OBJECT, count)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present:")
             identified_object_ambient.observe_object(PERSON_OBJECT, true)
