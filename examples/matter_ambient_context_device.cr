@@ -24,6 +24,7 @@ module MatterAmbientContext
     HUMAN_OBJECT_FORECAST_ENDPOINT   =          12_u16
     HUMAN_SOUND_ENDPOINT             =          13_u16
     HUMAN_SOUND_FORECAST_ENDPOINT    =          14_u16
+    OBJECT_SOUND_ENDPOINT            =          15_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -164,6 +165,15 @@ module MatterAmbientContext
         as: :predicted_human_sound_ambient
     end
 
+    endpoint OBJECT_SOUND_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectIdentification | Ambient::Feature::SoundIdentification,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :object_sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -203,6 +213,9 @@ module MatterAmbientContext
           elsif nonce.starts_with?("person-present-mixed-pred:")
             predicted_human_object_ambient.observe_object(PERSON_OBJECT, true)
             File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-present-object-sound:")
+            object_sound_ambient.observe_object(PERSON_OBJECT, true)
+            File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-count:")
             count = nonce.split(':')[1].to_u16
             object_ambient.observe_object_count(PERSON_OBJECT, count)
@@ -228,6 +241,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking-human-sound-pred:")
             predicted_human_sound_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-object-sound:")
+            object_sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("predict-walking:")
             first_start = @prediction_now + 120_u32

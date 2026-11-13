@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+OI, HA+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, OI, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+OI, HA+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, OI, OI+AUD, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -336,6 +336,7 @@ module Matter
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::HumanActivity | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectIdentification ||
+               @feature_map == (Feature::ObjectIdentification | Feature::SoundIdentification) ||
                @feature_map == (Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::ObjectCounting ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
@@ -343,7 +344,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -374,6 +375,13 @@ module Matter
         elsif @feature_map.object_identification?
           validate_supported_object_tags!(supported_object_tags)
           @supported_object_tags = supported_object_tags.dup
+          if @feature_map.sound_identification?
+            validate_supported_sound_tags!(supported_sound_tags)
+            @supported_sound_tags = supported_sound_tags.dup
+            if @supported_object_tags.size + @supported_sound_tags.size > MAX_SUPPORTED_TYPES
+              raise ArgumentError.new("combined supported tags exceed #{MAX_SUPPORTED_TYPES}")
+            end
+          end
           if !@feature_map.object_counting? && object_count_config
             raise ArgumentError.new("ObjectCountConfig requires ObjectCounting")
           end
@@ -556,7 +564,7 @@ module Matter
             finish_detection if @object_identified && @current_type.first.ambient_context_sensed.first == tag
             return
           end
-          finish_detection if @human_activity_detected
+          finish_detection if @human_activity_detected || @audio_context_detected
           current = @current_type.first.ambient_context_sensed.first
           finish_detection if @object_identified && current != tag
           new_detection = !@object_identified
