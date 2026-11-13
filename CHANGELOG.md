@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   threshold and count attributes, mandatory count status on human start events,
   modality switching, and HoldTime expiry. Verify with official chip-tool E2E.
 
+### Matter 1.6 Push AV stream field representation
+
+- Reject AllocatePushTransport and ModifyPushTransport requests that contain
+  neither a legacy stream ID nor a nonempty revision-2 stream list, or mix both
+  representations. Verify InvalidCommand and unchanged catalog state through
+  official chip-tool E2E and focused specs.
+
 ### Matter 1.6 Ambient Context Sensing combined human object and sound forecasts
 
 - Add HA+OI+AUD+PRED with host forecasts across all three configured tag
