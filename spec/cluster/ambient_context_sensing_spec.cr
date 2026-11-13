@@ -1006,6 +1006,152 @@ describe "Ambient Context Sensing HA+AUD profile" do
   end
 end
 
+describe "Ambient Context Sensing OI+AUD profile" do
+  unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+  feature_map = Ambient::Feature::ObjectIdentification | Ambient::Feature::SoundIdentification
+
+  it "advertises object and sound detection with their supported tag union" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person],
+      supported_sound_tags: [unknown_sound, barking])
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED,
+     Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT, Ambient::ATTR_HOLD_TIME,
+     Ambient::ATTR_HOLD_TIME_LIMITS].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should_not contain(id) }
+    cluster.ambient_context_type_supported.should eq([unknown_object, person, unknown_sound, barking])
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    read(cluster, Ambient::ATTR_AUDIO_CONTEXT_DETECTED).should be_false
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    expect_raises(ArgumentError, /sound tags/) do
+      build(Ambient, feature_map: feature_map,
+        supported_object_tags: [unknown_object, person], supported_sound_tags: [unknown_sound])
+    end
+  end
+
+  it "ends the active modality before switching and expires the active sound" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person],
+      supported_sound_tags: [unknown_sound, barking], hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_object(person, true)
+    cluster.object_identified?.should be_true
+    cluster.audio_context_detected?.should be_false
+    cluster.observe_sound(barking)
+    cluster.object_identified?.should be_false
+    cluster.audio_context_detected?.should be_true
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([barking])
+    events.map(&.[0]).should eq([
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+    ])
+    events.last[1].as_structure.keys.should eq([0_u8])
+    deadline = Time.instant + 3.seconds
+    while cluster.audio_context_detected? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.audio_context_detected?.should be_false
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([unknown_sound])
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+
+    cluster.observe_sound(barking)
+    cluster.observe_object(person, true)
+    cluster.audio_context_detected?.should be_false
+    cluster.object_identified?.should be_true
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([person])
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    events.last[1].as_structure.keys.should eq([0_u8])
+    cluster.observe_object(person, false)
+    cluster.object_identified?.should be_false
+  end
+end
+
+describe "Ambient Context Sensing HA+AUD+PRED profile" do
+  unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+  feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::SoundIdentification |
+                Ambient::Feature::PredictedActivity
+
+  it "advertises both live flags and clock-pruned forecasts for configured human and sound tags" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_sound_tags: [unknown_sound, barking],
+      prediction_clock: -> : UInt32? { now })
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED,
+     Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT, Ambient::ATTR_HOLD_TIME,
+     Ambient::ATTR_HOLD_TIME_LIMITS, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.ambient_context_type_supported.should eq([unknown_activity, walking, unknown_sound, barking])
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+
+    activity = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [walking], 80_u8)
+    sound = Ambient::PredictedActivityStruct.new(190_u32, 250_u32, [barking], 60_u8)
+    cluster.replace_predicted_activities([activity, sound])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire.size.should eq(2)
+    wire.each { |item| item.as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 5_u8]) }
+    Ambient::PredictedActivityStruct.from_tlv(wire[0]).ambient_context_type.should eq([walking])
+    Ambient::PredictedActivityStruct.from_tlv(wire[1]).ambient_context_type.should eq([barking])
+
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([sound])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
+
+  it "rejects unsupported and crowd forecasts atomically while human and sound detection switch" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_sound_tags: [unknown_sound, barking],
+      prediction_clock: -> : UInt32? { 100_u32 })
+    activity = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [walking], 80_u8)
+    cluster.replace_predicted_activities([activity])
+    expect_raises(ArgumentError, /supported ambient context tag/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(190_u32, 250_u32,
+          [Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /crowd fields/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(190_u32, 250_u32, [barking], 50_u8, true),
+      ])
+    end
+    cluster.predicted_activity.should eq([activity])
+    cluster.observe_human_activity(walking)
+    cluster.human_activity_detected?.should be_true
+    cluster.observe_sound(barking)
+    cluster.human_activity_detected?.should be_false
+    cluster.audio_context_detected?.should be_true
+    cluster.predicted_activity.should eq([activity])
+  end
+end
+
 describe "Ambient Context Sensing HA+OI+PRED profile" do
   unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
   walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
