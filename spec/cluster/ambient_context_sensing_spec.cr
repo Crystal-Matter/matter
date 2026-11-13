@@ -1008,7 +1008,7 @@ describe "Ambient Context Sensing HA+OI+AUD profile" do
       Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
     ])
     events.select { |event| event[0] == Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED }
-      .each { |event| event[1].as_structure.keys.should eq([0_u8]) }
+      .map(&.[1].as_structure.keys).each(&.should(eq([0_u8])))
     deadline = Time.instant + 3.seconds
     while cluster.audio_context_detected? && Time.instant < deadline
       sleep 20.milliseconds
