@@ -23,6 +23,32 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "requires exactly one legacy or list stream-field representation" do
+    cluster = push_av_fixture
+    base = push_av_options
+    missing = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+      base.trigger_options, base.ingest_method, base.container_options)
+    mixed = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+      base.trigger_options, base.ingest_method, base.container_options,
+      video_stream_id: 1_u16, video_streams: base.video_streams)
+
+    [missing, mixed].each do |invalid|
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(invalid))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(base))
+      .should be_a(PushAv::Tlv::AllocateResponse)
+    [missing, mixed].each do |invalid|
+      cluster.modify_push_transport(PushAv::Tlv::ModifyRequest.new(0_u16, invalid)).status
+        .should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
+    cluster.find_transport(PushAv::Tlv::FindRequest.new(0_u16)).as(PushAv::Tlv::FindResponse)
+      .transport_configurations.first.transport_options.as(PushAv::Tlv::TransportOptions)
+      .video_streams.as(Array(PushAv::Tlv::VideoStream)).size.should eq(1)
+  end
+
   it "rejects MetadataEnabled presence when the Metadata feature is absent" do
     cluster = push_av_fixture
     [false, true].each do |enabled|

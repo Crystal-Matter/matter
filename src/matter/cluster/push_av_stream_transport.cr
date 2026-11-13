@@ -108,6 +108,7 @@ module Matter
         expire_due
         fabric = accessing_fabric
         return fabric if fabric.is_a?(InteractionModel::Status)
+        return InteractionModel::Status.invalid_command unless valid_stream_fields?(request.transport_options)
         options = resolve_streams(request.transport_options, fabric)
         return options if options.is_a?(InteractionModel::Status)
         validation = validate_options(options, fabric)
@@ -156,6 +157,7 @@ module Matter
         return InteractionModel::Status.constraint_error if request.connection_id > MAX_CONNECTION_ID
         entry = find_owned(fabric, request.connection_id)
         return InteractionModel::Status.not_found unless entry
+        return InteractionModel::Status.invalid_command unless valid_stream_fields?(request.transport_options)
         options = resolve_streams(request.transport_options, fabric)
         return options if options.is_a?(InteractionModel::Status)
         validation = validate_options(options, fabric)
@@ -421,6 +423,12 @@ module Matter
           options.trigger_options, options.ingest_method, options.container_options,
           video_stream_id: video_id, audio_stream_id: audio_id, expiry_time: options.expiry_time,
           video_streams: videos.empty? ? nil : videos, audio_streams: audios.empty? ? nil : audios)
+      end
+
+      private def valid_stream_fields?(options : Tlv::TransportOptions) : Bool
+        has_lists = options.video_streams.try(&.present?) == true || options.audio_streams.try(&.present?) == true
+        has_legacy = !options.video_stream_id_state.absent? || !options.audio_stream_id_state.absent?
+        has_lists != has_legacy
       end
 
       private def clone_configuration(entry : Tlv::TransportConfiguration) : Tlv::TransportConfiguration
