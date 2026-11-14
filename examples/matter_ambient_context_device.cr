@@ -30,6 +30,7 @@ module MatterAmbientContext
     HUMAN_OBJECT_SOUND_PRED_ENDPOINT   =          18_u16
     HUMAN_COUNTED_OBJECT_ENDPOINT      =          19_u16
     HUMAN_COUNTED_OBJECT_PRED_ENDPOINT =          20_u16
+    COUNTED_OBJECT_SOUND_ENDPOINT      =          21_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -236,6 +237,17 @@ module MatterAmbientContext
         as: :predicted_human_counted_object_ambient
     end
 
+    endpoint COUNTED_OBJECT_SOUND_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification |
+                     Ambient::Feature::SoundIdentification,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        object_count_config: Ambient::ObjectCountConfig.new(PERSON_OBJECT, 2_u16),
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :counted_object_sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -315,6 +327,10 @@ module MatterAmbientContext
             count = nonce.split(':')[1].to_u16
             predicted_human_counted_object_ambient.observe_object_count(PERSON_OBJECT, count)
             File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-count-sound:")
+            count = nonce.split(':')[1].to_u16
+            counted_object_sound_ambient.observe_object_count(PERSON_OBJECT, count)
+            File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present:")
             identified_object_ambient.observe_object(PERSON_OBJECT, true)
             File.write("#{path}.ack", nonce)
@@ -335,6 +351,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking-object-sound:")
             object_sound_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-counted-object:")
+            counted_object_sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking-object-sound-pred:")
             predicted_object_sound_ambient.observe_sound(BARKING_SOUND)

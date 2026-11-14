@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing counted object and sound detection
+
+- Add OC+OI+AUD with configured object/sound tag union, count threshold and
+  sound detection, mandatory false count status on sound start events, live
+  modality switching, and HoldTime expiry. Verify with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing human counted-object forecasts
 
 - Add HA+OC+OI+PRED with host forecasts for configured human and object
