@@ -23,6 +23,18 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns ConstraintError for scalar TransportOptions bounds" do
+    cluster = push_av_fixture
+    base = push_av_options
+    invalid_tls = PushAv::Tlv::TransportOptions.new(base.stream_usage, UInt16::MAX, base.url,
+      base.trigger_options, base.ingest_method, base.container_options, video_streams: base.video_streams)
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(invalid_tls))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options("https://a/")))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+  end
+
   it "requires exactly one legacy or list stream-field representation" do
     cluster = push_av_fixture
     base = push_av_options
