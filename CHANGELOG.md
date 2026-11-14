@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing human counted-object forecasts
+
+- Add HA+OC+OI+PRED with host forecasts for configured human and object
+  tags, required crowd detection and optional count fields, clock pruning,
+  and independent live detection. Verify with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing human and counted-object detection
 
 - Add HA+OC+OI with a configured human/object tag union, counted-object
