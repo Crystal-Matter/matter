@@ -486,7 +486,9 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTlsEndpoint) unless @tls_endpoint_exists.try(&.call(fabric, options.tls_endpoint_id))
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidCombination) unless options.ingest_method.cmaf_ingest? && options.container_options.container_type.cmaf?
         cmaf = options.container_options.cmaf
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless cmaf.cmaf_interface.interface1? && cmaf.segment_duration.in?(MIN_SEGMENT_DURATION..MAX_SEGMENT_DURATION) && cmaf.chunk_duration <= cmaf.segment_duration // 2
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless cmaf.cmaf_interface.interface1?
+        return InteractionModel::Status.constraint_error unless cmaf.segment_duration.in?(MIN_SEGMENT_DURATION..MAX_SEGMENT_DURATION)
+        return InteractionModel::Status.constraint_error if cmaf.chunk_duration > cmaf.segment_duration // 2
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if cmaf.track_name.try { |name| name.bytesize < 1 || name.bytesize > MAX_STREAM_NAME_BYTES }
         return InteractionModel::Status.invalid_command if !cmaf.metadata_enabled.nil? && !feature_map.metadata?
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidUrl) unless valid_url?(options.url)
