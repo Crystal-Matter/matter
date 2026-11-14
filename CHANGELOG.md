@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV CMAF duration bounds
+
+- Return Interaction Model ConstraintError for out-of-range CMAF segment and
+  chunk durations, verified with official chip-tool E2E and focused specs.
+
 ### Scenes interoperability fixture isolation
 
 - Give Mode Select scene extension E2E its own device so the independent
