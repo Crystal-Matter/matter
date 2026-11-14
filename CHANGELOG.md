@@ -13,6 +13,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tags, required crowd detection and optional count fields, clock pruning,
   and independent live detection. Verify with official chip-tool E2E.
 
+### Matter 1.6 Push AV option bounds
+
+- Return Interaction Model ConstraintError for out-of-range TLSEndpointID and
+  URL byte length before semantic validation, with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing human and counted-object detection
 
 - Add HA+OC+OI with a configured human/object tag union, counted-object

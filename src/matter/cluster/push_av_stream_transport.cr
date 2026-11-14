@@ -14,6 +14,7 @@ module Matter
       feature :metadata, bit: 1
 
       MAX_CONNECTION_ID      = 65534_u16
+      MAX_TLS_ENDPOINT_ID    = 65534_u16
       MIN_URL_BYTES          =        13
       MAX_URL_BYTES          =      2000
       MAX_STREAMS            =        16
@@ -475,6 +476,8 @@ module Matter
       end
 
       private def validate_options(options : Tlv::TransportOptions, fabric : UInt8) : InteractionModel::Status
+        return InteractionModel::Status.constraint_error if options.tls_endpoint_id > MAX_TLS_ENDPOINT_ID
+        return InteractionModel::Status.constraint_error unless options.url.bytesize.in?(MIN_URL_BYTES..MAX_URL_BYTES)
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTlsEndpoint) unless @tls_endpoint_exists.try(&.call(fabric, options.tls_endpoint_id))
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidCombination) unless options.ingest_method.cmaf_ingest? && options.container_options.container_type.cmaf?
         cmaf = options.container_options.cmaf
@@ -528,7 +531,6 @@ module Matter
       end
 
       private def valid_url?(url : String) : Bool
-        return false unless url.bytesize.in?(MIN_URL_BYTES..MAX_URL_BYTES)
         uri = URI.parse(url)
         host = uri.host
         uri.scheme == "https" && !host.nil? && !host.empty? &&

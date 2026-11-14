@@ -169,6 +169,28 @@ describe "official SDK Push AV Stream Transport" do
     expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
   end
 
+  it "returns ConstraintError for out-of-range TLS endpoint and URL length" do
+    expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+      PushAvCatalogE2E.allocate_payload(UInt16::MAX.to_i64)), "CONSTRAINT_ERROR")
+    expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+      .should contain("CurrentConnections: 0 entries")
+
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+      PushAvCatalogE2E.allocate_payload(tls_id, "https://a/")), "CONSTRAINT_ERROR")
+    expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+      .should contain("CurrentConnections: 0 entries")
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
+
   it "expires a TLS-backed connection after time synchronization and restart" do
     expect_success(device.invoke("timesynchronization", "set-utctime", ["1000000000", "4"], endpoint: 0))
     certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
