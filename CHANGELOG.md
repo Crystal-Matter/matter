@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing human counted-object forecasts
+
+- Add HA+OC+OI+PRED with host forecasts for configured human and object
+  tags, required crowd detection and optional count fields, clock pruning,
+  and independent live detection. Verify with official chip-tool E2E.
+
 ### Matter 1.6 Push AV CMAF duration bounds
 
 - Return Interaction Model ConstraintError for out-of-range CMAF segment and
