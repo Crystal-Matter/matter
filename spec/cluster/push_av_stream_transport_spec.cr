@@ -23,6 +23,20 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns ConstraintError for invalid CMAF segment and chunk durations" do
+    cluster = push_av_fixture
+    base = push_av_options
+    [{499_u16, 100_u16}, {65501_u16, 100_u16}, {1000_u16, 501_u16}].each do |segment, chunk|
+      cmaf = PushAv::Tlv::CmafContainerOptions.new(PushAv::CmafInterface::Interface1, segment, chunk)
+      invalid = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        base.trigger_options, base.ingest_method,
+        PushAv::Tlv::ContainerOptions.new(PushAv::ContainerFormat::Cmaf, cmaf), video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(invalid))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    end
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+  end
+
   it "returns ConstraintError for out-of-range video and audio stream names" do
     cluster = push_av_fixture
     cluster.audio_stream_exists = ->(id : UInt16) { id == 1_u16 }
