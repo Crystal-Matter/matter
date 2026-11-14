@@ -11,6 +11,10 @@ For CMAF ingest, `TransportOptions.URL` is an HTTPS base URL with a nonempty
 host and a path ending in `/`. A query or fragment is invalid; allocation
 returns the cluster's `InvalidURL` status without creating a connection. The
 host media implementation appends its segment paths to this base URL.
+The URL must be 13–2000 bytes and `TLSEndpointID` must be at most 65534.
+Out-of-range values return Interaction Model `ConstraintError` before endpoint
+lookup or URL syntax validation. An in-range endpoint that does not exist still
+returns `InvalidTLSEndpoint`.
 
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera
