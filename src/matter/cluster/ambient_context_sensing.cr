@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+OI, HA+AUD, HA+OI+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, HA+OI+AUD+PRED, OI, OI+AUD, OI+AUD+PRED, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
+    # One active detection is supported for HA, HA+OI, HA+OC+OI, HA+AUD, HA+OI+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, HA+OI+AUD+PRED, OI, OI+AUD, OI+AUD+PRED, OI+PRED, OC+OI, OC+OI+PRED, AUD, or AUD+PRED.
     # OC+PRED publishes forecasts only; it has no detection event or count attribute.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
@@ -332,6 +332,7 @@ module Matter
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
@@ -347,7 +348,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+ObjectIdentification+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, HumanActivity+ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+ObjectCounting+ObjectIdentification, HumanActivity+SoundIdentification, HumanActivity+ObjectIdentification+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, HumanActivity+ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -373,8 +374,13 @@ module Matter
           if @supported_activity_tags.size + @supported_object_tags.size + @supported_sound_tags.size > MAX_SUPPORTED_TYPES
             raise ArgumentError.new("combined supported tags exceed #{MAX_SUPPORTED_TYPES}")
           end
-          raise ArgumentError.new("ObjectCountConfig requires ObjectCounting") if object_count_config
-          @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
+          if @feature_map.object_counting?
+            @object_count_config = object_count_config || default_object_count_config
+            validate_object_count_config!(@object_count_config)
+          else
+            raise ArgumentError.new("ObjectCountConfig requires ObjectCounting") if object_count_config
+            @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
+          end
         elsif @feature_map.object_identification?
           validate_supported_object_tags!(supported_object_tags)
           @supported_object_tags = supported_object_tags.dup
@@ -514,7 +520,8 @@ module Matter
             increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
             increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
             emit_ambient_context_detect_started(
-              AmbientContextDetectStartedEvent.new(@current_type.first.copy))
+              AmbientContextDetectStartedEvent.new(@current_type.first.copy,
+                @feature_map.object_counting? ? false : nil))
           end
           record_detection_observation(observed_at, new_detection)
         end
@@ -601,6 +608,7 @@ module Matter
             finish_detection if @object_identified
             return
           end
+          finish_detection if @human_activity_detected || @audio_context_detected
           current = @current_type.first.ambient_context_sensed.first
           finish_detection if @object_identified && current != tag
           new_detection = !@object_identified

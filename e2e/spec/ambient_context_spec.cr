@@ -7,8 +7,64 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, and HA+OI+AUD+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, and HA+OC+OI fixture" do
     device.commission!
+  end
+
+  it "switches HA+OC+OI between human activity and counted object detection" do
+    endpoint = 19
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(7)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    [0, 1, 3, 4, 5, 6, 7, 8, 9, 10].each { |id| attributes.should contain(id) }
+    [2, 11].each { |id| attributes.should_not contain(id) }
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(4)
+    expect_success(device.read("ambientcontextsensing", "object-count-config", endpoint)).output
+      .should contain("ObjectCountThreshold: 2")
+    expect_failure(device.read("ambientcontextsensing", "audio-context-detected", endpoint), "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.read("ambientcontextsensing", "predicted-activity", endpoint), "UNSUPPORTED_ATTRIBUTE")
+
+    ["walking-human-counted-object", "person-count-human:0", "person-count-human:2",
+     "walking-human-counted-object"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      human = expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+        .bool("HumanActivityDetected")
+      object = expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+        .bool("ObjectIdentified")
+      human.should eq(action != "person-count-human:2")
+      object.should eq(action == "person-count-human:2")
+      reached = expect_success(device.read("ambientcontextsensing", "object-count-threshold-reached", endpoint))
+        .bool("ObjectCountThresholdReached")
+      reached.should eq(action == "person-count-human:2")
+      # The pinned chip-tool cannot decode the valid NULL ObjectCount before threshold.
+      if reached
+        read_int(device, "ambientcontextsensing", "object-count", "ObjectCount", endpoint).should eq(2)
+        started = expect_success(device.chip(
+          ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+        started.output.should contain("AmbientContextDetected")
+        started.output.should contain("ObjectCountThresholdReached")
+        started.output.should contain("ObjectCount: 2")
+      end
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+                     .bool("HumanActivityDetected")
+      raise "Ambient Context HA+OC+OI detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
   end
 
   it "reads HA+OI+AUD+PRED forecasts from all three modalities and live switching" do

@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing human and counted-object detection
+
+- Add HA+OC+OI with a configured human/object tag union, counted-object
+  threshold and count attributes, mandatory count status on human start events,
+  modality switching, and HoldTime expiry. Verify with official chip-tool E2E.
+
 ### Matter 1.6 Push AV stream field representation
 
 - Reject AllocatePushTransport and ModifyPushTransport requests that contain

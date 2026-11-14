@@ -1466,6 +1466,97 @@ describe "Ambient Context Sensing HA+OI+PRED profile" do
   end
 end
 
+describe "Ambient Context Sensing HA+OC+OI profile" do
+  unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting |
+                Ambient::Feature::ObjectIdentification
+
+  it "advertises human and identified-object counting with the required config" do
+    config = Ambient::ObjectCountConfig.new(person, 2_u16)
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_object_tags: [unknown_object, person], object_count_config: config)
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_IDENTIFIED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_AUDIO_CONTEXT_DETECTED, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.ambient_context_type_supported.should eq([unknown_activity, walking, unknown_object, person])
+    cluster.object_count_config.counting_object.should eq(person)
+    cluster.object_count_config.object_count_threshold.should eq(2_u16)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    expect_raises(ArgumentError, /counting object/) do
+      build(Ambient, feature_map: feature_map,
+        supported_activity_tags: [unknown_activity, walking],
+        supported_object_tags: [unknown_object, person],
+        object_count_config: Ambient::ObjectCountConfig.new(unknown_object, 2_u16))
+    end
+  end
+
+  it "switches human and counted-object detections and includes mandatory event count status" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_object_tags: [unknown_object, person],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16), hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_human_activity(walking)
+    started_human = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+    started_human.ambient_context_detected.ambient_context_sensed.should eq([walking])
+    started_human.object_count_reached.should be_false
+    started_human.object_count.should be_nil
+    events.last[1].as_structure.keys.should eq([0_u8, 1_u8])
+    cluster.observe_object_count(person, 0_u16)
+    cluster.human_activity_detected?.should be_true
+
+    cluster.observe_object_count(person, 2_u16)
+    cluster.human_activity_detected?.should be_false
+    cluster.object_identified?.should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(2_u16)
+    started_object = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+    started_object.ambient_context_detected.ambient_context_sensed.should eq([person])
+    started_object.object_count_reached.should be_true
+    started_object.object_count.should eq(2_u16)
+    events.last[1].as_structure.keys.should eq([0_u8, 1_u8, 2_u8])
+
+    cluster.observe_human_activity(walking)
+    cluster.human_activity_detected?.should be_true
+    cluster.object_identified?.should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
+    Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1]).object_count_reached.should be_false
+    events.map(&.[0]).should eq([
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+    ])
+    deadline = Time.instant + 3.seconds
+    while cluster.human_activity_detected? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.human_activity_detected?.should be_false
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+  end
+end
+
 describe "Ambient Context Sensing OC+OI profile" do
   unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
   person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
