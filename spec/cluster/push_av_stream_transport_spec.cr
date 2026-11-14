@@ -32,6 +32,8 @@ describe PushAv do
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options("https://a/")))
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(push_av_options("https://api.example.com/#{"a" * 2000}/")))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
   end
 
