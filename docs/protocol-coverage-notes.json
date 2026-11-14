@@ -27,7 +27,7 @@
   "0x0405": "Nullable immutable limits, fixed optional tolerance, and host reading validation",
   "0x0406": "HoldTime limits and synchronized legacy delay, modality-gated timing, optional OccupancyEvent; entry threshold filtering remains device-owned",
   "0x0430": "Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E",
-  "0x0431": "Opt-in HA, HA+OI, HA+OC+OI, HA+AUD, HA+OI+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, HA+OI+AUD+PRED, OI, OI+AUD, OI+AUD+PRED, OI+PRED, AUD, AUD+PRED, OC-only universal attrs, OC+PRED crowd forecasts, combined OC+OI, or OC+OI+PRED provisional profiles; host owns prediction and physical sensing",
+  "0x0431": "Opt-in HA, HA+OI, HA+OC+OI, HA+OC+OI+PRED, HA+AUD, HA+OI+AUD, HA+PRED, HA+OI+PRED, HA+AUD+PRED, HA+OI+AUD+PRED, OI, OI+AUD, OI+AUD+PRED, OI+PRED, AUD, AUD+PRED, OC-only universal attrs, OC+PRED crowd forecasts, combined OC+OI, or OC+OI+PRED provisional profiles; host owns prediction and physical sensing",
   "0x0507": "host-owned source switching and status display",
   "0x0508": "host-owned physical sleep after InvokeResponse",
   "0x050C": "host callbacks own app lifecycle and foreground focus; platform and endpoint app chip-tool E2E",
