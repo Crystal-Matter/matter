@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV stream name bounds
+
+- Return Interaction Model ConstraintError when revision-2 video or audio stream
+  names are outside 1–16 bytes, before stream lookup; verify with official
+  chip-tool E2E and focused specs.
+
 ### Matter 1.6 Push AV option bounds
 
 - Return Interaction Model ConstraintError for out-of-range TLSEndpointID and
