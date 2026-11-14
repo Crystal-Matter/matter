@@ -1,7 +1,7 @@
 require "./e2e_helper"
 
 describe "Mode Select CurrentMode scene extension over chip-tool" do
-  device = E2E::Device["matter_scenes_fabric"]
+  device = E2E::Device["matter_scenes_mode_select"]
 
   endpoint = 1
   group_id = 73

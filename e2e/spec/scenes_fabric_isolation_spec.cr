@@ -25,8 +25,16 @@ module ScenesFabricE2E
   end
 
   def self.open_window(storage_dir : String) : String
-    result = expect_success(E2E.run(["pairing", "open-commissioning-window",
-                                     NODE_ID.to_s, "1", "900", "1000", "3840"], storage_dir))
+    args = ["pairing", "open-commissioning-window", NODE_ID.to_s, "1", "900", "1000", "3840"]
+    result = E2E.run(args, storage_dir)
+    # After fabric removal, a new CASE handshake can time out under the full
+    # Compose suite's load before the command reaches the device.
+    if !result.success? && result.im_status.nil? &&
+       result.output.includes?("CASESession.cpp") && result.output.includes?("Timeout")
+      sleep 1.second
+      result = E2E.run(args, storage_dir)
+    end
+    expect_success(result)
     result.output.match(/Manual pairing code:\s*\[?([0-9]{4}-[0-9]{3}-[0-9]{4}|[0-9]{11})\]?/i)
       .try(&.[1]) || fail("chip-tool did not report an enhanced-window pairing code\n#{result.output}")
   end
