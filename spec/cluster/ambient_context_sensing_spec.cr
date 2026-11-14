@@ -1634,6 +1634,96 @@ describe "Ambient Context Sensing HA+OC+OI+PRED profile" do
   end
 end
 
+describe "Ambient Context Sensing OC+OI+AUD profile" do
+  unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+  feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification |
+                Ambient::Feature::SoundIdentification
+
+  it "advertises counted-object and sound detection with their conditional wire surface" do
+    config = Ambient::ObjectCountConfig.new(person, 2_u16)
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person],
+      supported_sound_tags: [unknown_sound, barking], object_count_config: config)
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.ambient_context_type_supported.should eq([unknown_object, person, unknown_sound, barking])
+    cluster.object_count_config.should eq(config)
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+    expect_raises(ArgumentError, /counting object/) do
+      build(Ambient, feature_map: feature_map,
+        supported_object_tags: [unknown_object, person],
+        supported_sound_tags: [unknown_sound, barking],
+        object_count_config: Ambient::ObjectCountConfig.new(unknown_object, 2_u16))
+    end
+  end
+
+  it "switches counted objects and sounds with mandatory count status in each start event" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person],
+      supported_sound_tags: [unknown_sound, barking],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16), hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+
+    cluster.observe_sound(barking)
+    cluster.audio_context_detected?.should be_true
+    sound_start = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+    sound_start.ambient_context_detected.ambient_context_sensed.should eq([barking])
+    sound_start.object_count_reached.should be_false
+    sound_start.object_count.should be_nil
+    events.last[1].as_structure.keys.should eq([0_u8, 1_u8])
+    cluster.observe_object_count(person, 0_u16)
+    cluster.audio_context_detected?.should be_true
+
+    cluster.observe_object_count(person, 2_u16)
+    cluster.audio_context_detected?.should be_false
+    cluster.object_identified?.should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(2_u16)
+    object_start = Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1])
+    object_start.ambient_context_detected.ambient_context_sensed.should eq([person])
+    object_start.object_count_reached.should be_true
+    object_start.object_count.should eq(2_u16)
+    events.last[1].as_structure.keys.should eq([0_u8, 1_u8, 2_u8])
+
+    cluster.observe_sound(barking)
+    cluster.audio_context_detected?.should be_true
+    cluster.object_identified?.should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
+    Ambient::AmbientContextDetectStartedEvent.from_tlv(events.last[1]).object_count_reached.should be_false
+    events.map(&.[0]).should eq([
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+    ])
+    deadline = Time.instant + 3.seconds
+    while cluster.audio_context_detected? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.audio_context_detected?.should be_false
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+  end
+end
+
 describe "Ambient Context Sensing OC+OI profile" do
   unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
   person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
