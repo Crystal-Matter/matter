@@ -23,6 +23,30 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns InvalidCommand for Motion trigger field-presence violations" do
+    cluster = push_av_fixture
+    base = push_av_options
+    control = PushAv::Tlv::MotionTimeControl.new(1_u16, 0_u16, 5_u32, 0_u16)
+    zones = [] of PushAv::Tlv::ZoneOptions
+    invalid = [
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_sensitivity: 1_u8, motion_time_control: control, max_pre_roll_len: 0_u16),
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: zones, motion_time_control: control, max_pre_roll_len: 0_u16),
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: zones, motion_sensitivity: 1_u8, max_pre_roll_len: 0_u16),
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Command,
+        motion_time_control: control, max_pre_roll_len: 0_u16),
+    ]
+    invalid.each do |trigger|
+      options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        trigger, base.ingest_method, base.container_options, video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+  end
+
   it "returns ConstraintError for invalid CMAF segment and chunk durations" do
     cluster = push_av_fixture
     base = push_av_options
