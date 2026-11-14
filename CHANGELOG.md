@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV trigger field presence
+
+- Return Interaction Model InvalidCommand for missing Motion trigger fields and
+  Motion-only fields on Command triggers, verified with official chip-tool E2E
+  and focused specs.
+
 ### Matter 1.6 Push AV CMAF duration bounds
 
 - Return Interaction Model ConstraintError for out-of-range CMAF segment and
