@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Scenes interoperability fixture isolation
+
+- Give Mode Select scene extension E2E its own device so the independent
+  Scenes fabric-removal test cannot revoke its controller credentials. Retry
+  only a pre-command CASE timeout when opening a window after fabric removal.
+
 ### Matter 1.6 Push AV stream name bounds
 
 - Return Interaction Model ConstraintError when revision-2 video or audio stream
