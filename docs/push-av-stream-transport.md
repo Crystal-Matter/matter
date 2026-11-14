@@ -15,6 +15,9 @@ The URL must be 13–2000 bytes and `TLSEndpointID` must be at most 65534.
 Out-of-range values return Interaction Model `ConstraintError` before endpoint
 lookup or URL syntax validation. An in-range endpoint that does not exist still
 returns `InvalidTLSEndpoint`.
+Revision-2 `VideoStreamName` and `AudioStreamName` values must each be 1–16
+bytes. Out-of-range names return Interaction Model `ConstraintError` before
+stream lookup; an unknown stream ID with a valid name returns `InvalidStream`.
 
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera

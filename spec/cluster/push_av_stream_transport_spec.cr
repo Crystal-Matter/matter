@@ -23,6 +23,27 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns ConstraintError for out-of-range video and audio stream names" do
+    cluster = push_av_fixture
+    cluster.audio_stream_exists = ->(id : UInt16) { id == 1_u16 }
+    base = push_av_options
+
+    ["", "x" * 17].each do |name|
+      invalid_video = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        base.trigger_options, base.ingest_method, base.container_options,
+        video_streams: [PushAv::Tlv::VideoStream.new(name, 1_u16)])
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(invalid_video))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+
+      invalid_audio = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        base.trigger_options, base.ingest_method, base.container_options,
+        audio_streams: [PushAv::Tlv::AudioStream.new(name, 1_u16)])
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(invalid_audio))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    end
+    cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+  end
+
   it "returns ConstraintError for scalar TransportOptions bounds" do
     cluster = push_av_fixture
     base = push_av_options
