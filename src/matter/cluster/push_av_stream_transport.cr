@@ -18,6 +18,7 @@ module Matter
       MIN_URL_BYTES          =        13
       MAX_URL_BYTES          =      2000
       MAX_STREAMS            =        16
+      MIN_STREAM_NAME_BYTES  =         1
       MAX_STREAM_NAME_BYTES  =        16
       MAX_USER_DEFINED_BYTES =       256
       MIN_SEGMENT_DURATION   =   500_u16
@@ -476,26 +477,30 @@ module Matter
       end
 
       private def validate_options(options : Tlv::TransportOptions, fabric : UInt8) : InteractionModel::Status
+        videos = options.video_streams || [] of Tlv::VideoStream
+        audios = options.audio_streams || [] of Tlv::AudioStream
+        return InteractionModel::Status.constraint_error if videos.any? { |stream| !stream.name.bytesize.in?(MIN_STREAM_NAME_BYTES..MAX_STREAM_NAME_BYTES) }
+        return InteractionModel::Status.constraint_error if audios.any? { |stream| !stream.name.bytesize.in?(MIN_STREAM_NAME_BYTES..MAX_STREAM_NAME_BYTES) }
         return InteractionModel::Status.constraint_error if options.tls_endpoint_id > MAX_TLS_ENDPOINT_ID
         return InteractionModel::Status.constraint_error unless options.url.bytesize.in?(MIN_URL_BYTES..MAX_URL_BYTES)
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTlsEndpoint) unless @tls_endpoint_exists.try(&.call(fabric, options.tls_endpoint_id))
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidCombination) unless options.ingest_method.cmaf_ingest? && options.container_options.container_type.cmaf?
         cmaf = options.container_options.cmaf
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless cmaf.cmaf_interface.interface1? && cmaf.segment_duration.in?(MIN_SEGMENT_DURATION..MAX_SEGMENT_DURATION) && cmaf.chunk_duration <= cmaf.segment_duration // 2
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless cmaf.cmaf_interface.interface1?
+        return InteractionModel::Status.constraint_error unless cmaf.segment_duration.in?(MIN_SEGMENT_DURATION..MAX_SEGMENT_DURATION)
+        return InteractionModel::Status.constraint_error if cmaf.chunk_duration > cmaf.segment_duration // 2
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if cmaf.track_name.try { |name| name.bytesize < 1 || name.bytesize > MAX_STREAM_NAME_BYTES }
         return InteractionModel::Status.invalid_command if !cmaf.metadata_enabled.nil? && !feature_map.metadata?
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidUrl) unless valid_url?(options.url)
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTime) if options.expiry_time && @time_valid.try(&.call) != true
 
-        videos = options.video_streams || [] of Tlv::VideoStream
-        audios = options.audio_streams || [] of Tlv::AudioStream
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.size > MAX_STREAMS || audios.size > MAX_STREAMS
         if videos.map(&.id).to_set.size != videos.size || audios.map(&.id).to_set.size != audios.size ||
            videos.map(&.name).to_set.size != videos.size || audios.map(&.name).to_set.size != audios.size
           return InteractionModel::Status.cluster_failure(StatusCode::DuplicateStreamValues)
         end
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.any? { |stream| !stream.name.bytesize.in?(1..MAX_STREAM_NAME_BYTES) || !@video_stream_exists.try(&.call(stream.id)) }
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if audios.any? { |stream| !stream.name.bytesize.in?(1..MAX_STREAM_NAME_BYTES) || !@audio_stream_exists.try(&.call(stream.id)) }
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.any? { |stream| !@video_stream_exists.try(&.call(stream.id)) }
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if audios.any? { |stream| !@audio_stream_exists.try(&.call(stream.id)) }
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if options.video_stream_id.try { |id| !@video_stream_exists.try(&.call(id)) }
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if options.audio_stream_id.try { |id| !@audio_stream_exists.try(&.call(id)) }
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.empty? && audios.empty? && options.video_stream_id.nil? && options.audio_stream_id.nil?

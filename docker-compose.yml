@@ -330,6 +330,12 @@ services:
       E2E_DEVICE: matter_scenes_fabric
       E2E_BINARY: matter_level_control
 
+  scenes-mode-select:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_scenes_mode_select
+      E2E_BINARY: matter_level_control
+
   door-lock:
     <<: *device
     environment:
@@ -782,6 +788,7 @@ services:
       joint-fabric-migration-target: { condition: service_healthy }
       level-control: { condition: service_healthy }
       scenes-fabric: { condition: service_healthy }
+      scenes-mode-select: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       door-lock-aliro: { condition: service_healthy }
       binding-validation: { condition: service_healthy }

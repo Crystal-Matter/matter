@@ -13,6 +13,23 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tags, required crowd detection and optional count fields, clock pruning,
   and independent live detection. Verify with official chip-tool E2E.
 
+### Matter 1.6 Push AV CMAF duration bounds
+
+- Return Interaction Model ConstraintError for out-of-range CMAF segment and
+  chunk durations, verified with official chip-tool E2E and focused specs.
+
+### Scenes interoperability fixture isolation
+
+- Give Mode Select scene extension E2E its own device so the independent
+  Scenes fabric-removal test cannot revoke its controller credentials. Retry
+  only a pre-command CASE timeout when opening a window after fabric removal.
+
+### Matter 1.6 Push AV stream name bounds
+
+- Return Interaction Model ConstraintError when revision-2 video or audio stream
+  names are outside 1–16 bytes, before stream lookup; verify with official
+  chip-tool E2E and focused specs.
+
 ### Matter 1.6 Push AV option bounds
 
 - Return Interaction Model ConstraintError for out-of-range TLSEndpointID and

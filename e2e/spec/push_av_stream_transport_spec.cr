@@ -23,11 +23,12 @@ module PushAvCatalogE2E
 
   def self.allocate_payload(tls_id : Int64, url : String = "https://api.example.com/ingest/",
                             metadata_enabled : Bool? = nil, video_streams : Bool = true,
-                            legacy_video_id : UInt16? = nil) : String
+                            legacy_video_id : UInt16? = nil, video_stream_name : String = "main",
+                            segment_duration : UInt16 = 1000_u16, chunk_duration : UInt16 = 500_u16) : String
     metadata = metadata_enabled.nil? ? "" : %(,"7":#{metadata_enabled})
     legacy_video = legacy_video_id.try { |id| %(,"1":"u:#{id}") } || ""
-    video_list = video_streams ? %(,"9":[{"0":"main","1":"u:1"}]) : ""
-    %({"0":{"0":"u:1"#{legacy_video},"3":"u:#{tls_id}","4":"#{url}","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:1000","2":"u:500"#{metadata}}}#{video_list}}})
+    video_list = video_streams ? %(,"9":[{"0":"#{video_stream_name}","1":"u:1"}]) : ""
+    %({"0":{"0":"u:1"#{legacy_video},"3":"u:#{tls_id}","4":"#{url}","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:#{segment_duration}","2":"u:#{chunk_duration}"#{metadata}}}#{video_list}}})
   end
 
   def self.expiring_payload(tls_id : Int64, seconds : UInt32) : String
@@ -187,6 +188,44 @@ describe "official SDK Push AV Stream Transport" do
       PushAvCatalogE2E.allocate_payload(tls_id, "https://a/")), "CONSTRAINT_ERROR")
     expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
       .should contain("CurrentConnections: 0 entries")
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
+
+  it "returns ConstraintError for video stream names outside 1 to 16 bytes" do
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    ["", "x" * 17].each do |name|
+      expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, video_stream_name: name)), "CONSTRAINT_ERROR")
+      expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+        .should contain("CurrentConnections: 0 entries")
+    end
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
+
+  it "returns ConstraintError for invalid CMAF segment and chunk durations" do
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    [{499_u16, 100_u16}, {65501_u16, 100_u16}, {1000_u16, 501_u16}].each do |segment, chunk|
+      expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, segment_duration: segment, chunk_duration: chunk)), "CONSTRAINT_ERROR")
+      expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+        .should contain("CurrentConnections: 0 entries")
+    end
     expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
     expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
   end
