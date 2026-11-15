@@ -23,6 +23,35 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns ConstraintError for invalid Motion durations and sensitivity" do
+    base = push_av_options
+    [{0_u16, 5_u32, 1_u8}, {5_u16, 1_u32, 1_u8}, {1_u16, 5_u32, 0_u8}, {1_u16, 5_u32, 11_u8}].each do |initial, maximum, sensitivity|
+      cluster = push_av_fixture
+      trigger = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: [] of PushAv::Tlv::ZoneOptions, motion_sensitivity: sensitivity,
+        motion_time_control: PushAv::Tlv::MotionTimeControl.new(initial, 0_u16, maximum, 0_u16),
+        max_pre_roll_len: 0_u16)
+      options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        trigger, base.ingest_method, base.container_options, video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+    end
+
+    [0_u8, 11_u8].each do |sensitivity|
+      cluster = push_av_fixture(PushAv::Feature::PerZoneSensitivity)
+      trigger = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: [PushAv::Tlv::ZoneOptions.new(nil, sensitivity)],
+        motion_time_control: PushAv::Tlv::MotionTimeControl.new(1_u16, 0_u16, 5_u32, 0_u16),
+        max_pre_roll_len: 0_u16)
+      options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        trigger, base.ingest_method, base.container_options, video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
+    end
+  end
+
   it "returns InvalidCommand for Motion trigger field-presence violations" do
     cluster = push_av_fixture
     base = push_av_options
