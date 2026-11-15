@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing human, crowd, and sound forecasts
+
+- Add HA+OC+AUD+PRED with independent human and sound observations,
+  semantic-tag crowd forecasts, trusted-time pruning, and no OI count fields.
+  Verify the conditional wire surface with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing full feature profile
 
 - Add HA+OC+OI+AUD+PRED with three live detection modalities, configured

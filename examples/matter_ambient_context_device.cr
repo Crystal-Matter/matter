@@ -34,6 +34,7 @@ module MatterAmbientContext
     COUNTED_OBJECT_SOUND_PRED_ENDPOINT =          22_u16
     ALL_LIVE_ENDPOINT                  =          23_u16
     ALL_FEATURES_ENDPOINT              =          24_u16
+    HUMAN_CROWD_SOUND_PRED_ENDPOINT    =          25_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -48,6 +49,7 @@ module MatterAmbientContext
     @human_counted_object_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @counted_object_sound_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
     @all_features_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
+    @human_crowd_sound_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Ambient Context",
       vendor_id: Matter::SetupPayload.test_vendor_id,
@@ -291,6 +293,17 @@ module MatterAmbientContext
         as: :all_features_ambient
     end
 
+    endpoint HUMAN_CROWD_SOUND_PRED_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting |
+                     Ambient::Feature::SoundIdentification | Ambient::Feature::PredictedActivity,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        prediction_clock: -> : UInt32? { @human_crowd_sound_prediction_now },
+        as: :human_crowd_sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -341,6 +354,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("walking-all-features:")
             all_features_ambient.observe_human_activity(WALKING_ACTIVITY)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-human-crowd-sound:")
+            human_crowd_sound_ambient.observe_human_activity(WALKING_ACTIVITY)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present-mixed:")
             human_object_ambient.observe_object(PERSON_OBJECT, true)
@@ -433,6 +449,9 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking-all-features:")
             all_features_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-human-crowd-sound:")
+            human_crowd_sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("predict-walking:")
             first_start = @prediction_now + 120_u32
@@ -579,6 +598,19 @@ module MatterAmbientContext
               Ambient::PredictedActivityStruct.new(start_at + 240_u32, start_at + 300_u32,
                 [BARKING_SOUND], 60_u8, true),
             ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("predict-human-crowd-sound:")
+            start_at = @human_crowd_sound_prediction_now + 120_u32
+            human_crowd_sound_ambient.replace_predicted_activities([
+              Ambient::PredictedActivityStruct.new(start_at, start_at + 60_u32,
+                [WALKING_ACTIVITY], 80_u8, true, 12_u8),
+              Ambient::PredictedActivityStruct.new(start_at + 120_u32, start_at + 180_u32,
+                [BARKING_SOUND], 60_u8, false),
+            ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("advance-human-crowd-sound-prediction-clock:")
+            @human_crowd_sound_prediction_now += 120_u32
+            human_crowd_sound_ambient.refresh_predicted_activities
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("advance-all-features-prediction-clock:")
             @all_features_prediction_now += 120_u32
