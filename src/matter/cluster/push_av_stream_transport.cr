@@ -506,21 +506,21 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.empty? && audios.empty? && options.video_stream_id.nil? && options.audio_stream_id.nil?
         trigger = options.trigger_options
         if trigger.trigger_type.motion?
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_zones_state.absent?
-          time_control = trigger.motion_time_control
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless time_control && valid_time_control?(time_control)
+          return InteractionModel::Status.invalid_command if trigger.motion_zones_state.absent?
+          time_control = trigger.motion_time_control || return InteractionModel::Status.invalid_command
+          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless valid_time_control?(time_control)
           motion_zones = trigger.motion_zones || [] of Tlv::ZoneOptions
           if feature_map.per_zone_sensitivity?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.try(&.in?(MIN_SENSITIVITY..MAX_SENSITIVITY)) }
           else
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity_state.absent?
+            return InteractionModel::Status.invalid_command if trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.nil? }
           end
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidZone) if motion_zones.any? { |zone| zone.zone.try { |id| !@zone_exists.try(&.call(id)) } }
         elsif !trigger.motion_zones_state.absent? || !trigger.motion_sensitivity_state.absent? || trigger.motion_time_control
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions)
+          return InteractionModel::Status.invalid_command
         end
         if trigger.trigger_type.continuous?
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.max_pre_roll_len
