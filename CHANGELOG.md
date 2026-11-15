@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   semantic-tag forecasts, mandatory crowd fields, and trusted-time pruning.
   Verify the complete wire surface with official chip-tool E2E.
 
+### Matter 1.6 Push AV Motion scalar bounds
+
+- Return Interaction Model ConstraintError for invalid Motion time control and
+  global or per-zone sensitivity values; verify with official chip-tool E2E
+  and focused specs.
+
 ### Matter 1.6 Ambient Context Sensing all live modalities
 
 - Add HA+OC+OI+AUD with human, sound, and counted-object observations,
