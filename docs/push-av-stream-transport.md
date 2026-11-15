@@ -26,6 +26,10 @@ Motion triggers require MotionZones, MotionTimeControl, and, without
 PerZoneSensitivity, MotionSensitivity. Those fields must be absent for Command
 triggers. Missing required or present forbidden fields return Interaction
 Model `InvalidCommand`; invalid values are checked separately.
+Motion `InitialDuration` must be at least 1 second, `MaxDuration` at least
+`InitialDuration`, and non-null global or per-zone sensitivity 1–10. Violations
+return Interaction Model `ConstraintError`; a missing required per-zone
+sensitivity returns `InvalidCommand`.
 
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera

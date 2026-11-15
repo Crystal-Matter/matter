@@ -50,6 +50,16 @@ describe PushAv do
         .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
       cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).should be_empty
     end
+
+    cluster = push_av_fixture(PushAv::Feature::PerZoneSensitivity)
+    missing_zone_sensitivity = PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+      motion_zones: [PushAv::Tlv::ZoneOptions.new(nil)],
+      motion_time_control: PushAv::Tlv::MotionTimeControl.new(1_u16, 0_u16, 5_u32, 0_u16),
+      max_pre_roll_len: 0_u16)
+    options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+      missing_zone_sensitivity, base.ingest_method, base.container_options, video_streams: base.video_streams)
+    cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
   end
 
   it "returns InvalidCommand for Motion trigger field-presence violations" do

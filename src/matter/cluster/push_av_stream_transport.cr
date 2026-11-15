@@ -508,14 +508,15 @@ module Matter
         if trigger.trigger_type.motion?
           return InteractionModel::Status.invalid_command if trigger.motion_zones_state.absent?
           time_control = trigger.motion_time_control || return InteractionModel::Status.invalid_command
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless valid_time_control?(time_control)
+          return InteractionModel::Status.constraint_error unless valid_time_control?(time_control)
           motion_zones = trigger.motion_zones || [] of Tlv::ZoneOptions
           if feature_map.per_zone_sensitivity?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.motion_sensitivity_state.absent?
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.try(&.in?(MIN_SENSITIVITY..MAX_SENSITIVITY)) }
+            return InteractionModel::Status.invalid_command if motion_zones.any?(&.sensitivity.nil?)
+            return InteractionModel::Status.constraint_error if motion_zones.any? { |zone| !zone.sensitivity.not_nil!.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
           else
             return InteractionModel::Status.invalid_command if trigger.motion_sensitivity_state.absent?
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
+            return InteractionModel::Status.constraint_error if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.nil? }
           end
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidZone) if motion_zones.any? { |zone| zone.zone.try { |id| !@zone_exists.try(&.call(id)) } }

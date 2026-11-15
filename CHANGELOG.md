@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV Motion scalar bounds
+
+- Return Interaction Model ConstraintError for invalid Motion time control and
+  global or per-zone sensitivity values; verify with official chip-tool E2E
+  and focused specs.
+
 ### Matter 1.6 Push AV trigger field presence
 
 - Return Interaction Model InvalidCommand for missing Motion trigger fields and
