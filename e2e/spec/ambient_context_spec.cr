@@ -7,8 +7,62 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, OC+OI+AUD, and OC+OI+AUD+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, OC+OI+AUD, OC+OI+AUD+PRED, and HA+OC+OI+AUD fixture" do
     device.commission!
+  end
+
+  it "switches HA+OC+OI+AUD human, sound, and counted-object detection" do
+    endpoint = 23
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(15)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    (0..10).each { |id| attributes.should contain(id) }
+    attributes.should_not contain(11)
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(6)
+    expect_success(device.read("ambientcontextsensing", "object-count-config", endpoint)).output
+      .should contain("ObjectCountThreshold: 2")
+    expect_failure(device.read("ambientcontextsensing", "predicted-activity", endpoint), "UNSUPPORTED_ATTRIBUTE")
+
+    ["walking-all-live", "barking-all-live", "person-count-all-live:0",
+     "person-count-all-live:2", "walking-all-live"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      human = expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+        .bool("HumanActivityDetected")
+      object = expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+        .bool("ObjectIdentified")
+      sound = expect_success(device.read("ambientcontextsensing", "audio-context-detected", endpoint))
+        .bool("AudioContextDetected")
+      human.should eq(action == "walking-all-live")
+      object.should eq(action == "person-count-all-live:2")
+      sound.should eq(action == "barking-all-live" || action == "person-count-all-live:0")
+      reached = expect_success(device.read("ambientcontextsensing", "object-count-threshold-reached", endpoint))
+        .bool("ObjectCountThresholdReached")
+      reached.should eq(object)
+      read_int(device, "ambientcontextsensing", "object-count", "ObjectCount", endpoint).should eq(2) if reached
+    end
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+    started.output.should contain("ObjectCountThresholdReached")
+    started.output.should contain("ObjectCount: 2")
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+                     .bool("HumanActivityDetected")
+      raise "Ambient Context HA+OC+OI+AUD detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
   end
 
   it "reads OC+OI+AUD+PRED crowd forecasts and switches counted objects with sounds" do

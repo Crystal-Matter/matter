@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   global or per-zone sensitivity values; verify with official chip-tool E2E
   and focused specs.
 
+### Matter 1.6 Ambient Context Sensing all live modalities
+
+- Add HA+OC+OI+AUD with human, sound, and counted-object observations,
+  six-tag union, mandatory count status on detection starts, one active
+  modality, and HoldTime expiry. Verify with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing counted object and sound forecasts
 
 - Add OC+OI+AUD+PRED with configured object and sound tags, crowd fields on
