@@ -311,4 +311,35 @@ describe "official SDK Push AV Stream Transport" do
     expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
     expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
   end
+
+  it "returns InvalidCommand for MaxPreRollLen presence violations" do
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    time_control = %({"0":"u:1","1":"u:0","2":"u:5","3":"u:0"})
+    invalid = [
+      %({"0":"u:0"}),
+      %({"0":"u:1","1":[],"2":"u:1","3":#{time_control}}),
+      %({"0":"u:2","4":"u:0"}),
+    ]
+    invalid.each do |trigger|
+      expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, trigger_options: trigger)), "INVALID_COMMAND")
+      expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+        .should contain("CurrentConnections: 0 entries")
+    end
+
+    expect_success(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+      PushAvCatalogE2E.allocate_payload(tls_id, trigger_options: %({"0":"u:2"}))))
+    connections = expect_success(device.read("pushavstreamtransport", "current-connections", 0))
+    id = connections.int("ConnectionID") || fail("missing Push AV connection ID\n#{connections.output}")
+    expect_success(device.invoke("pushavstreamtransport", "deallocate-push-transport", [id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
 end
