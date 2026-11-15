@@ -511,22 +511,22 @@ module Matter
           return InteractionModel::Status.constraint_error unless valid_time_control?(time_control)
           motion_zones = trigger.motion_zones || [] of Tlv::ZoneOptions
           if feature_map.per_zone_sensitivity?
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.motion_sensitivity_state.absent?
+            return InteractionModel::Status.invalid_command unless trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.invalid_command if motion_zones.any?(&.sensitivity.nil?)
             return InteractionModel::Status.constraint_error if motion_zones.any? { |zone| zone.sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) } == true }
           else
             return InteractionModel::Status.invalid_command if trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.constraint_error if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.nil? }
+            return InteractionModel::Status.invalid_command if motion_zones.any? { |zone| !zone.sensitivity.nil? }
           end
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidZone) if motion_zones.any? { |zone| zone.zone.try { |id| !@zone_exists.try(&.call(id)) } }
         elsif !trigger.motion_zones_state.absent? || !trigger.motion_sensitivity_state.absent? || trigger.motion_time_control
           return InteractionModel::Status.invalid_command
         end
         if trigger.trigger_type.continuous?
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.max_pre_roll_len
+          return InteractionModel::Status.invalid_command if trigger.max_pre_roll_len
         else
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.max_pre_roll_len
+          return InteractionModel::Status.invalid_command unless trigger.max_pre_roll_len
           if pre_roll = trigger.max_pre_roll_len
             if pre_roll > 0_u16 && !@pre_roll_valid.try(&.call(pre_roll))
               return InteractionModel::Status.cluster_failure(StatusCode::InvalidPreRollLength)
