@@ -7,8 +7,79 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, and OC+OI+AUD fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, OC+OI+AUD, and OC+OI+AUD+PRED fixture" do
     device.commission!
+  end
+
+  it "reads OC+OI+AUD+PRED crowd forecasts and switches counted objects with sounds" do
+    endpoint = 22
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(30)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].each { |id| attributes.should contain(id) }
+    attributes.should_not contain(0)
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(4)
+    expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint))
+      .output.should_not contain("StartTimestamp")
+    expect_failure(device.read("ambientcontextsensing", "human-activity-detected", endpoint), "UNSUPPORTED_ATTRIBUTE")
+
+    ["predict-counted-object-sound", "advance-counted-object-sound-prediction-clock",
+     "barking-counted-object-pred", "person-count-sound-pred:2",
+     "barking-counted-object-pred"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      case action
+      when "predict-counted-object-sound"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.scan(/StartTimestamp/).size.should eq(2)
+        forecast.should contain("AmbientContextType")
+        forecast.should contain("Tag: 3")
+        forecast.should contain("Tag: 4")
+        forecast.scan(/CrowdDetected/).size.should eq(2)
+        forecast.should contain("CrowdCount: 12")
+        forecast.should contain("Confidence: 80")
+        forecast.should contain("Confidence: 60")
+      when "advance-counted-object-sound-prediction-clock"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.should_not contain("Confidence: 80")
+        forecast.should_not contain("CrowdCount")
+        forecast.should contain("Confidence: 60")
+        forecast.should contain("CrowdDetected")
+      else
+        sound = expect_success(device.read("ambientcontextsensing", "audio-context-detected", endpoint))
+          .bool("AudioContextDetected")
+        object = expect_success(device.read("ambientcontextsensing", "object-identified", endpoint))
+          .bool("ObjectIdentified")
+        sound.should eq(action == "barking-counted-object-pred")
+        object.should eq(action == "person-count-sound-pred:2")
+        reached = expect_success(device.read("ambientcontextsensing", "object-count-threshold-reached", endpoint))
+          .bool("ObjectCountThresholdReached")
+        reached.should eq(object)
+        read_int(device, "ambientcontextsensing", "object-count", "ObjectCount", endpoint).should eq(2) if reached
+      end
+    end
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+    started.output.should contain("ObjectCountThresholdReached")
+    started.output.should contain("ObjectCount: 2")
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "audio-context-detected", endpoint))
+                     .bool("AudioContextDetected")
+      raise "Ambient Context OC+OI+AUD+PRED detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
   end
 
   it "switches OC+OI+AUD between sound and counted-object detection" do

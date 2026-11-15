@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing counted object and sound forecasts
+
+- Add OC+OI+AUD+PRED with configured object and sound tags, crowd fields on
+  forecasts, trusted-time pruning, and independent live count/sound detection.
+  Verify the combined wire surface with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing counted object and sound detection
 
 - Add OC+OI+AUD with configured object/sound tag union, count threshold and
