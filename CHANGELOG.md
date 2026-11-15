@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sound detection, mandatory false count status on sound start events, live
   modality switching, and HoldTime expiry. Verify with official chip-tool E2E.
 
+### Matter 1.6 Push AV trigger field presence
+
+- Return Interaction Model InvalidCommand for missing Motion trigger fields and
+  Motion-only fields on Command triggers, verified with official chip-tool E2E
+  and focused specs.
+
 ### Matter 1.6 Ambient Context Sensing human counted-object forecasts
 
 - Add HA+OC+OI+PRED with host forecasts for configured human and object

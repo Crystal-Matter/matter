@@ -22,6 +22,10 @@ For supported CMAF Interface-1 options, `SegmentDuration` must be 500–65500
 milliseconds and `ChunkDuration` must not exceed half the segment duration.
 Out-of-range durations return Interaction Model `ConstraintError`, leaving the
 connection catalog unchanged.
+Motion triggers require MotionZones, MotionTimeControl, and, without
+PerZoneSensitivity, MotionSensitivity. Those fields must be absent for Command
+triggers. Missing required or present forbidden fields return Interaction
+Model `InvalidCommand`; invalid values are checked separately.
 
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera

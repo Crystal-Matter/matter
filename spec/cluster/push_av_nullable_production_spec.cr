@@ -77,7 +77,7 @@ describe "Push AV nullable production fields" do
       motion_time_control: time, max_pre_roll_len: 0_u16)
     cluster.allocate_push_transport(PushAvNullable::Tlv::AllocateRequest.new(
       nullable_push_av_options(TLV::FieldState(UInt16).value(9_u16), missing)))
-      .as(Matter::InteractionModel::Status).cluster_status.should eq(PushAvNullable::StatusCode::InvalidOptions.value)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
     explicit_null = PushAvNullable::Tlv::TriggerOptions.new(PushAvNullable::TriggerType::Motion,
       motion_zones: TLV::FieldState(Array(PushAvNullable::Tlv::ZoneOptions)).null,
       motion_sensitivity: TLV::FieldState(UInt8).null,

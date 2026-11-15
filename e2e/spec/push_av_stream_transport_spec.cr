@@ -24,11 +24,12 @@ module PushAvCatalogE2E
   def self.allocate_payload(tls_id : Int64, url : String = "https://api.example.com/ingest/",
                             metadata_enabled : Bool? = nil, video_streams : Bool = true,
                             legacy_video_id : UInt16? = nil, video_stream_name : String = "main",
-                            segment_duration : UInt16 = 1000_u16, chunk_duration : UInt16 = 500_u16) : String
+                            segment_duration : UInt16 = 1000_u16, chunk_duration : UInt16 = 500_u16,
+                            trigger_options : String = %({"0":"u:0","4":"u:0"})) : String
     metadata = metadata_enabled.nil? ? "" : %(,"7":#{metadata_enabled})
     legacy_video = legacy_video_id.try { |id| %(,"1":"u:#{id}") } || ""
     video_list = video_streams ? %(,"9":[{"0":"#{video_stream_name}","1":"u:1"}]) : ""
-    %({"0":{"0":"u:1"#{legacy_video},"3":"u:#{tls_id}","4":"#{url}","5":{"0":"u:0","4":"u:0"},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:#{segment_duration}","2":"u:#{chunk_duration}"#{metadata}}}#{video_list}}})
+    %({"0":{"0":"u:1"#{legacy_video},"3":"u:#{tls_id}","4":"#{url}","5":#{trigger_options},"6":"u:0","7":{"0":"u:0","1":{"0":"u:0","1":"u:#{segment_duration}","2":"u:#{chunk_duration}"#{metadata}}}#{video_list}}})
   end
 
   def self.expiring_payload(tls_id : Int64, seconds : UInt32) : String
@@ -254,6 +255,32 @@ describe "official SDK Push AV Stream Transport" do
       sleep 1.second
     end
     expect_failure(device.invoke("pushavstreamtransport", "find-transport", ["null"], endpoint: 0), "NOT_FOUND")
+    expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
+    expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
+  end
+
+  it "returns InvalidCommand for Motion trigger field-presence violations" do
+    certificate = "hex:#{PushAvCatalogE2E.root_certificate.hexstring}"
+    root = expect_success(device.invoke("tlscertificatemanagement", "provision-root-certificate",
+      [certificate, "null"], endpoint: 0))
+    caid = root.int("caid") || fail("missing CAID\n#{root.output}")
+    endpoint = expect_success(device.invoke("tlsclientmanagement", "provision-endpoint",
+      ["hex:6170692e6578616d706c652e636f6d", "443", caid.to_s, "null", "null"], endpoint: 0))
+    tls_id = endpoint.int("endpointID") || fail("missing TLS endpoint ID\n#{endpoint.output}")
+
+    time_control = %({"0":"u:1","1":"u:0","2":"u:5","3":"u:0"})
+    invalid = [
+      %({"0":"u:1","2":"u:1","3":#{time_control},"4":"u:0"}),
+      %({"0":"u:1","1":[],"3":#{time_control},"4":"u:0"}),
+      %({"0":"u:1","1":[],"2":"u:1","4":"u:0"}),
+      %({"0":"u:0","3":#{time_control},"4":"u:0"}),
+    ]
+    invalid.each do |trigger|
+      expect_failure(PushAvCatalogE2E.command(device, PushAvCatalogE2E::PushAv::CMD_ALLOCATE_PUSH_TRANSPORT,
+        PushAvCatalogE2E.allocate_payload(tls_id, trigger_options: trigger)), "INVALID_COMMAND")
+      expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
+        .should contain("CurrentConnections: 0 entries")
+    end
     expect_success(device.invoke("tlsclientmanagement", "remove-endpoint", [tls_id.to_s], endpoint: 0))
     expect_success(device.invoke("tlscertificatemanagement", "remove-root-certificate", [caid.to_s], endpoint: 0))
   end
