@@ -513,7 +513,7 @@ module Matter
           if feature_map.per_zone_sensitivity?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.invalid_command if motion_zones.any?(&.sensitivity.nil?)
-            return InteractionModel::Status.constraint_error if motion_zones.any? { |zone| !zone.sensitivity.not_nil!.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
+            return InteractionModel::Status.constraint_error if motion_zones.any? { |zone| zone.sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) } == true }
           else
             return InteractionModel::Status.invalid_command if trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.constraint_error if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
