@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing full feature profile
+
+- Add HA+OC+OI+AUD+PRED with three live detection modalities, configured
+  semantic-tag forecasts, mandatory crowd fields, and trusted-time pruning.
+  Verify the complete wire surface with official chip-tool E2E.
+
 ### Matter 1.6 Push AV Motion scalar bounds
 
 - Return Interaction Model ConstraintError for invalid Motion time control and
