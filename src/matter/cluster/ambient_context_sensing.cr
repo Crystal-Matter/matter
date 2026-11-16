@@ -410,7 +410,7 @@ module Matter
           @object_count_config = object_count_config || default_object_count_config
           validate_object_count_config!(@object_count_config) if @feature_map.object_counting?
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
-        elsif @feature_map.object_counting?
+        elsif @feature_map.object_counting? && !@feature_map.sound_identification?
           raise ArgumentError.new("ObjectCountConfig requires ObjectIdentification") if object_count_config
           @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
           @current_type = [] of AmbientContextTypeStruct
