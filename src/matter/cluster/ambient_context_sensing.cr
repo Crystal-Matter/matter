@@ -331,7 +331,9 @@ module Matter
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectCounting) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::PredictedActivity) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification | Feature::PredictedActivity) ||
@@ -353,6 +355,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification | Feature::SoundIdentification) ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
+               @feature_map == (Feature::ObjectCounting | Feature::SoundIdentification) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
           raise ArgumentError.new("unsupported HumanActivity, ObjectCounting, ObjectIdentification, SoundIdentification, or PredictedActivity feature map")
@@ -407,13 +410,14 @@ module Matter
           @object_count_config = object_count_config || default_object_count_config
           validate_object_count_config!(@object_count_config) if @feature_map.object_counting?
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
-        elsif @feature_map.object_counting?
+        elsif @feature_map.object_counting? && !@feature_map.sound_identification?
           raise ArgumentError.new("ObjectCountConfig requires ObjectIdentification") if object_count_config
           @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
           @current_type = [] of AmbientContextTypeStruct
         else
           validate_supported_sound_tags!(supported_sound_tags)
           @supported_sound_tags = supported_sound_tags.dup
+          raise ArgumentError.new("ObjectCountConfig requires ObjectIdentification") if object_count_config
           @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_sound(IdentifiedSound::Unknown)])]
         end

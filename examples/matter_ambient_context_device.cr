@@ -36,6 +36,9 @@ module MatterAmbientContext
     ALL_FEATURES_ENDPOINT              =          24_u16
     HUMAN_CROWD_SOUND_PRED_ENDPOINT    =          25_u16
     HUMAN_CROWD_PRED_ENDPOINT          =          26_u16
+    HUMAN_CROWD_ENDPOINT               =          27_u16
+    CROWD_SOUND_ENDPOINT               =          28_u16
+    HUMAN_CROWD_SOUND_ENDPOINT         =          29_u16
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
@@ -316,6 +319,32 @@ module MatterAmbientContext
         as: :human_crowd_ambient
     end
 
+    endpoint HUMAN_CROWD_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :human_crowd_live_ambient
+    end
+
+    endpoint CROWD_SOUND_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::SoundIdentification,
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :crowd_sound_live_ambient
+    end
+
+    endpoint HUMAN_CROWD_SOUND_ENDPOINT, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting |
+                     Ambient::Feature::SoundIdentification,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 60_u16, 60_u16),
+        as: :human_crowd_sound_live_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -372,6 +401,12 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("walking-human-crowd:")
             human_crowd_ambient.observe_human_activity(WALKING_ACTIVITY)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-human-crowd-live:")
+            human_crowd_live_ambient.observe_human_activity(WALKING_ACTIVITY)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-human-crowd-sound-live:")
+            human_crowd_sound_live_ambient.observe_human_activity(WALKING_ACTIVITY)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("person-present-mixed:")
             human_object_ambient.observe_object(PERSON_OBJECT, true)
@@ -467,6 +502,12 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking-human-crowd-sound:")
             human_crowd_sound_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-crowd-sound-live:")
+            crowd_sound_live_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-human-crowd-sound-live:")
+            human_crowd_sound_live_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("predict-walking:")
             first_start = @prediction_now + 120_u32
