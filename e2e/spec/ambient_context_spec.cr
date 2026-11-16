@@ -7,8 +7,64 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, OC+OI+AUD, OC+OI+AUD+PRED, HA+OC+OI+AUD, and HA+OC+OI+AUD+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, AUD+PRED, OI, OC+PRED, OI+PRED, OC+OI+PRED, OC, HA+OI, HA+OI+PRED, HA+AUD, HA+AUD+PRED, OI+AUD, OI+AUD+PRED, HA+OI+AUD, HA+OI+AUD+PRED, HA+OC+OI, HA+OC+OI+PRED, OC+OI+AUD, OC+OI+AUD+PRED, HA+OC+OI+AUD, HA+OC+OI+AUD+PRED, and HA+OC+PRED fixture" do
     device.commission!
+  end
+
+  it "reads HA+OC+PRED tagged crowd forecasts without OI count attributes or event fields" do
+    endpoint = 26
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", endpoint).should eq(19)
+    attributes = expect_success(device.read("ambientcontextsensing", "attribute-list", endpoint)).int_list("AttributeList")
+    [0, 3, 4, 8, 9, 10, 11].each { |id| attributes.should contain(id) }
+    [1, 2, 5, 6, 7].each { |id| attributes.should_not contain(id) }
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", endpoint))
+      .output.scan(/NamespaceID/).size.should eq(2)
+
+    ["predict-human-crowd", "advance-human-crowd-prediction-clock",
+     "walking-human-crowd"].each do |action|
+      File.delete(ack) if File.exists?(ack)
+      nonce = "#{action}:#{Time.utc.to_unix_ms}"
+      File.write("#{trigger}.tmp", nonce)
+      File.rename("#{trigger}.tmp", trigger)
+      deadline = Time.instant + 10.seconds
+      until File.exists?(ack) && File.read(ack) == nonce
+        raise "Ambient Context host did not acknowledge #{action}" if Time.instant >= deadline
+        sleep 100.milliseconds
+      end
+      case action
+      when "predict-human-crowd"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.scan(/StartTimestamp/).size.should eq(2)
+        forecast.scan(/CrowdDetected/).size.should eq(2)
+        forecast.should contain("CrowdCount: 12")
+        forecast.should contain("Tag: 3")
+        forecast.should contain("Confidence: 60")
+      when "advance-human-crowd-prediction-clock"
+        forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", endpoint)).output
+        forecast.scan(/StartTimestamp/).size.should eq(1)
+        forecast.should_not contain("CrowdCount")
+        forecast.should contain("Confidence: 60")
+      else
+        expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+          .bool("HumanActivityDetected").should be_true
+        started = expect_success(device.chip(
+          ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, endpoint.to_s]))
+        started.output.should contain("AmbientContextDetected")
+        started.output.should_not contain("ObjectCountThresholdReached")
+        started.output.should_not contain("ObjectCount:")
+      end
+    end
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, endpoint))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break unless expect_success(device.read("ambientcontextsensing", "human-activity-detected", endpoint))
+                     .bool("HumanActivityDetected")
+      raise "Ambient Context HA+OC+PRED detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, endpoint.to_s]))
+    (ended.int("EventStartTime") || ended.int("EventStartTimePos")).as(Int64).should be > 0_i64
   end
 
   it "reads HA+OC+AUD+PRED crowd forecasts without OI count attributes or event fields" do
