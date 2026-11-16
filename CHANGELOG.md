@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Push AV trigger field presence
+
+- Return Interaction Model InvalidCommand for missing or forbidden
+  MaxPreRollLen and feature-incompatible Motion sensitivity fields; verify
+  with official chip-tool E2E and focused specs.
+
 ### Matter 1.6 Ambient Context Sensing full feature profile
 
 - Add HA+OC+OI+AUD+PRED with three live detection modalities, configured

@@ -23,6 +23,39 @@ private def push_av_fixture(features : PushAv::Feature = PushAv::Feature::None) 
 end
 
 describe PushAv do
+  it "returns InvalidCommand for remaining trigger field-presence violations" do
+    base = push_av_options
+    control = PushAv::Tlv::MotionTimeControl.new(1_u16, 0_u16, 5_u32, 0_u16)
+    zones = [] of PushAv::Tlv::ZoneOptions
+    invalid = [
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Command),
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: zones, motion_sensitivity: 1_u8, motion_time_control: control),
+      PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Continuous, max_pre_roll_len: 0_u16),
+    ]
+    invalid.each do |trigger|
+      cluster = push_av_fixture
+      options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        trigger, base.ingest_method, base.container_options, video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
+
+    [
+      {push_av_fixture(PushAv::Feature::PerZoneSensitivity), PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: [PushAv::Tlv::ZoneOptions.new(nil, 1_u8)], motion_sensitivity: 1_u8,
+        motion_time_control: control, max_pre_roll_len: 0_u16)},
+      {push_av_fixture, PushAv::Tlv::TriggerOptions.new(PushAv::TriggerType::Motion,
+        motion_zones: [PushAv::Tlv::ZoneOptions.new(nil, 1_u8)], motion_sensitivity: 1_u8,
+        motion_time_control: control, max_pre_roll_len: 0_u16)},
+    ].each do |cluster, trigger|
+      options = PushAv::Tlv::TransportOptions.new(base.stream_usage, base.tls_endpoint_id, base.url,
+        trigger, base.ingest_method, base.container_options, video_streams: base.video_streams)
+      cluster.allocate_push_transport(PushAv::Tlv::AllocateRequest.new(options))
+        .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    end
+  end
+
   it "returns ConstraintError for invalid Motion durations and sensitivity" do
     base = push_av_options
     [{0_u16, 5_u32, 1_u8}, {5_u16, 1_u32, 1_u8}, {1_u16, 5_u32, 0_u8}, {1_u16, 5_u32, 11_u8}].each do |initial, maximum, sensitivity|
