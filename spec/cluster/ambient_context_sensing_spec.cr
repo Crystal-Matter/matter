@@ -2355,3 +2355,74 @@ describe "Ambient Context Sensing OC+OI profile" do
     expect_raises(ArgumentError) { cluster.feature_map = Ambient::Feature::HumanActivity }
   end
 end
+
+describe "Ambient Context Sensing OC+AUD+PRED profile" do
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+  feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::SoundIdentification |
+                Ambient::Feature::PredictedActivity
+
+  it "advertises sound detection and tagged crowd forecasts without OI count attributes" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_sound_tags: [unknown_sound, barking],
+      prediction_clock: -> : UInt32? { now })
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    cluster.ambient_context_type_supported.should eq([unknown_sound, barking])
+    [Ambient::ATTR_AUDIO_CONTEXT_DETECTED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_IDENTIFIED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT].each { |id| attribute_ids(cluster).should_not contain(id) }
+    first = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [barking], 80_u8, true, 12_u8)
+    second = Ambient::PredictedActivityStruct.new(190_u32, 250_u32, [unknown_sound], 60_u8, false)
+    cluster.replace_predicted_activities([first, second])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire[0].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 4_u8, 5_u8])
+    wire[1].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 5_u8])
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
+
+  it "emits sound events without count fields and rejects malformed forecasts atomically" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_sound_tags: [unknown_sound, barking],
+      prediction_clock: -> : UInt32? { 100_u32 })
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_sound(barking)
+    cluster.audio_context_detected?.should be_true
+    events.first[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    events.first[1].as_structure.keys.should eq([0_u8])
+    valid = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [barking], 80_u8, true)
+    cluster.replace_predicted_activities([valid])
+    expect_raises(ArgumentError, /CrowdDetected/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(190_u32, 250_u32, [barking], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /supported ambient context tag/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(190_u32, 250_u32,
+          [Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)], 50_u8, true),
+      ])
+    end
+    cluster.predicted_activity.should eq([valid])
+    expect_raises(ArgumentError, /ObjectIdentification/) do
+      build(Ambient, feature_map: feature_map,
+        supported_sound_tags: [unknown_sound, barking],
+        object_count_config: Ambient::ObjectCountConfig.new(
+          Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person), 2_u16),
+        prediction_clock: -> : UInt32? { 100_u32 })
+    end
+  end
+end

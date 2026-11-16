@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing complete feature-map matrix
+
+- Add OC+AUD+PRED with live sound detection, tagged crowd forecasts,
+  trusted-time pruning, and no OI count fields. The constructor now accepts
+  all 30 valid Matter 1.6 Ambient feature maps; verify the final profile
+  with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing mixed live OC profiles
 
 - Add HA+OC, OC+AUD, and HA+OC+AUD with human and/or sound live
