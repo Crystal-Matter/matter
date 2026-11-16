@@ -356,6 +356,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::SoundIdentification) ||
+               @feature_map == (Feature::ObjectCounting | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
           raise ArgumentError.new("unsupported HumanActivity, ObjectCounting, ObjectIdentification, SoundIdentification, or PredictedActivity feature map")
