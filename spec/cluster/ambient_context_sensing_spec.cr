@@ -31,7 +31,6 @@ describe Ambient do
     limits.fixed?.should be_true
     limits.writable?.should be_false
     expect_raises(ArgumentError, /HumanActivity/) { build(Ambient, feature_map: Ambient::Feature::None) }
-    expect_raises(ArgumentError, /HumanActivity/) { build(Ambient, feature_map: Ambient::Feature.from_value(0x03_u32)) }
   end
 
   it "encodes standard SemanticTag structs and requires a supported human activity type" do
@@ -1530,6 +1529,108 @@ describe "Ambient Context Sensing HA+OC+PRED profile" do
           Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person), 2_u16),
         prediction_clock: -> : UInt32? { 100_u32 })
     end
+  end
+end
+
+describe "Ambient Context Sensing OC mixed live profiles without OI" do
+  unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+
+  it "supports HA+OC with human events and no OI count surface" do
+    feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking], hold_time: 1_u16)
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_SIMULTANEOUS_DETECTION_LIMIT,
+     Ambient::ATTR_HOLD_TIME, Ambient::ATTR_HOLD_TIME_LIMITS].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.ambient_context_type_supported.should eq([unknown_activity, walking])
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_human_activity(walking)
+    events.first[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    events.first[1].as_structure.keys.should eq([0_u8])
+    deadline = Time.instant + 3.seconds
+    while cluster.human_activity_detected? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.human_activity_detected?.should be_false
+    events.last[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+    cluster.ambient_context_type.first.ambient_context_sensed.should eq([unknown_activity])
+  end
+
+  it "supports OC+AUD with sound events and no OI count surface" do
+    feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::SoundIdentification
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_sound_tags: [unknown_sound, barking])
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    [Ambient::ATTR_AUDIO_CONTEXT_DETECTED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED].each { |id| attribute_ids(cluster).should contain(id) }
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_OBJECT_IDENTIFIED,
+     Ambient::ATTR_OBJECT_COUNT_REACHED, Ambient::ATTR_OBJECT_COUNT_CONFIG,
+     Ambient::ATTR_OBJECT_COUNT, Ambient::ATTR_PREDICTED_ACTIVITY].each do |id|
+      attribute_ids(cluster).should_not contain(id)
+    end
+    cluster.ambient_context_type_supported.should eq([unknown_sound, barking])
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_sound(barking)
+    cluster.audio_context_detected?.should be_true
+    events.first[0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    events.first[1].as_structure.keys.should eq([0_u8])
+    expect_raises(ArgumentError, /ObjectIdentification/) do
+      build(Ambient, feature_map: feature_map, supported_sound_tags: [unknown_sound, barking],
+        object_count_config: Ambient::ObjectCountConfig.new(
+          Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person), 2_u16))
+    end
+  end
+
+  it "supports HA+OC+AUD with tag union, one active modality, and count-free events" do
+    feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::ObjectCounting |
+                  Ambient::Feature::SoundIdentification
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown_activity, walking],
+      supported_sound_tags: [unknown_sound, barking])
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    cluster.ambient_context_type_supported.should eq([unknown_activity, walking, unknown_sound, barking])
+    [Ambient::ATTR_HUMAN_ACTIVITY_DETECTED, Ambient::ATTR_AUDIO_CONTEXT_DETECTED,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT,
+     Ambient::ATTR_PREDICTED_ACTIVITY].each { |id| attribute_ids(cluster).should_not contain(id) }
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+    cluster.observe_human_activity(walking)
+    cluster.observe_sound(barking)
+    cluster.human_activity_detected?.should be_false
+    cluster.audio_context_detected?.should be_true
+    events.map(&.[0]).should eq([
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED,
+      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+    ])
+    events.first[1].as_structure.keys.should eq([0_u8])
+    events.last[1].as_structure.keys.should eq([0_u8])
   end
 end
 
