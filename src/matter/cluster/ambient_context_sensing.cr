@@ -331,6 +331,7 @@ module Matter
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification | Feature::PredictedActivity) ||
