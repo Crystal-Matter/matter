@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing mixed live OC profiles
+
+- Add HA+OC, OC+AUD, and HA+OC+AUD with human and/or sound live
+  detection, count-free event payloads, HoldTime expiry, and no OI count
+  attributes. Verify all three wire profiles with official chip-tool E2E.
+
 ### Matter 1.6 Ambient Context Sensing human crowd forecasts
 
 - Add HA+OC+PRED with host-supplied tagged crowd forecasts, live human
