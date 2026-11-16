@@ -336,6 +336,7 @@ module Matter
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
+               @feature_map == (Feature::HumanActivity | Feature::ObjectCounting | Feature::SoundIdentification | Feature::PredictedActivity) ||
                @feature_map == (Feature::HumanActivity | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification | Feature::SoundIdentification) ||
                @feature_map == (Feature::HumanActivity | Feature::ObjectIdentification | Feature::SoundIdentification | Feature::PredictedActivity) ||
@@ -353,7 +354,7 @@ module Matter
                @feature_map == (Feature::ObjectCounting | Feature::PredictedActivity) ||
                @feature_map == Feature::SoundIdentification ||
                @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
-          raise ArgumentError.new("only HumanActivity, HumanActivity+ObjectIdentification, HumanActivity+ObjectCounting+ObjectIdentification, HumanActivity+ObjectCounting+ObjectIdentification+PredictedActivity, HumanActivity+ObjectCounting+ObjectIdentification+SoundIdentification, HumanActivity+ObjectCounting+ObjectIdentification+SoundIdentification+PredictedActivity, HumanActivity+SoundIdentification, HumanActivity+ObjectIdentification+SoundIdentification, HumanActivity+PredictedActivity, HumanActivity+ObjectIdentification+PredictedActivity, HumanActivity+SoundIdentification+PredictedActivity, HumanActivity+ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification, ObjectIdentification+SoundIdentification, ObjectIdentification+SoundIdentification+PredictedActivity, ObjectIdentification+PredictedActivity, ObjectCounting, ObjectCounting+ObjectIdentification, ObjectCounting+ObjectIdentification+PredictedActivity, ObjectCounting+ObjectIdentification+SoundIdentification, ObjectCounting+ObjectIdentification+SoundIdentification+PredictedActivity, ObjectCounting+PredictedActivity, SoundIdentification, or SoundIdentification+PredictedActivity is implemented")
+          raise ArgumentError.new("unsupported HumanActivity, ObjectCounting, ObjectIdentification, SoundIdentification, or PredictedActivity feature map")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -379,11 +380,14 @@ module Matter
           if @supported_activity_tags.size + @supported_object_tags.size + @supported_sound_tags.size > MAX_SUPPORTED_TYPES
             raise ArgumentError.new("combined supported tags exceed #{MAX_SUPPORTED_TYPES}")
           end
-          if @feature_map.object_counting?
+          if @feature_map.object_counting? && @feature_map.object_identification?
             @object_count_config = object_count_config || default_object_count_config
             validate_object_count_config!(@object_count_config)
           else
-            raise ArgumentError.new("ObjectCountConfig requires ObjectCounting") if object_count_config
+            if object_count_config
+              raise ArgumentError.new("ObjectCountConfig requires ObjectIdentification") if @feature_map.object_counting?
+              raise ArgumentError.new("ObjectCountConfig requires ObjectCounting")
+            end
             @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
           end
         elsif @feature_map.object_identification?
@@ -451,7 +455,7 @@ module Matter
             if @feature_map.object_counting? && prediction.crowd_detected.nil?
               raise ArgumentError.new("crowd prediction requires CrowdDetected")
             end
-            if @feature_map.object_identification? || !@feature_map.object_counting?
+            if @feature_map.human_activity? || @feature_map.object_identification? || @feature_map.sound_identification?
               unless tags && tags.size == 1 && supported_tags.includes?(tags.first)
                 raise ArgumentError.new("prediction must use one supported ambient context tag")
               end
@@ -526,7 +530,7 @@ module Matter
             increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy,
-                @feature_map.object_counting? ? false : nil))
+                @feature_map.object_counting? && @feature_map.object_identification? ? false : nil))
           end
           record_detection_observation(observed_at, new_detection)
         end
