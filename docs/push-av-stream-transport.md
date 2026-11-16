@@ -30,6 +30,11 @@ Motion `InitialDuration` must be at least 1 second, `MaxDuration` at least
 `InitialDuration`, and non-null global or per-zone sensitivity 1–10. Violations
 return Interaction Model `ConstraintError`; a missing required per-zone
 sensitivity returns `InvalidCommand`.
+`MaxPreRollLen` is required for Command and Motion triggers and forbidden for
+Continuous triggers. A missing required or present forbidden field returns
+Interaction Model `InvalidCommand`. With PerZoneSensitivity, global
+`MotionSensitivity` is forbidden; without it, each zone's `ZoneSensitivity`
+is forbidden. These presence violations also return `InvalidCommand`.
 
 Install the cluster beside TLS Certificate Management and TLS Client Management.
 The latter is node-scoped on endpoint 0, while Push AV may be on a camera
