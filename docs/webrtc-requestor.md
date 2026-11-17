@@ -21,8 +21,12 @@ and returns the host's status. This matches the official SDK's
 the Provider has ended the protocol session even if local media cleanup fails.
 The host is responsible for retrying any media cleanup that failed.
 
-The synthetic Aggregator fixture registers a logical test session on
-commissioning so official chip-tool can exercise the wire commands. Its Peer
-returns `InvalidInState` and supplies no SDP or media. It does not exercise
-Provider solicitation, Provider-issued session IDs, WebRTC negotiation, or a
-complete Camera controller or Camera device topology.
+`DeviceType.camera_controller` declares Matter 1.6 Camera Controller `0x0147`
+revision 1: this endpoint must serve WebRTC Transport Requestor and list
+WebRTC Transport Provider as a client in Descriptor.ClientList. The synthetic
+Camera Controller fixture registers a logical test session on commissioning
+so official chip-tool can verify that topology and exercise the wire commands.
+Its Peer returns `InvalidInState` and supplies no SDP or media. It does not
+exercise Provider solicitation, Provider-issued session IDs, or WebRTC
+negotiation; a production controller needs a host WebRTC engine and session
+lifecycle integration.
