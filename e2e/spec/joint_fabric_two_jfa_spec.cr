@@ -200,6 +200,17 @@ private def assert_two_jfa_on_off_access(im : Matter::Controller::ImClient,
   end
 end
 
+private def read_two_jfa_on_off(im : Matter::Controller::ImClient,
+                                session : Matter::Session::SecureContext,
+                                peer : Socket::IPAddress) : Bool
+  report = im.read_attribute(session: session, peer: peer,
+    endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+    attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+  data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  Bool.from_tlv(data.to_slice)
+end
+
 private def jfa_rollout_attribute(type : T.class, im : Matter::Controller::ImClient,
                                   session : Matter::Session::SecureContext,
                                   peer : Socket::IPAddress, attribute_id : UInt32) : T forall T
@@ -2863,6 +2874,12 @@ describe "three provisioned Joint Fabric Administrators" do
         counter_lease: sdk_revoked_store.counter_lease(sdk_revoked_id))
       sdk_survivor_im = Matter::Controller::ImClient.new(sdk_survivor_client, E2E::COMMAND_TIMEOUT)
       sdk_revoked_im = Matter::Controller::ImClient.new(sdk_revoked_client, E2E::COMMAND_TIMEOUT)
+      sdk_survivor_invoker = Matter::Controller::GroupInvoker.new(sdk_survivor_client, sdk_survivor_store)
+      sdk_revoked_invoker = Matter::Controller::GroupInvoker.new(sdk_revoked_client, sdk_revoked_store)
+      sdk_survivor_invoker.install_epoch_key(sdk_survivor.fabric_id, sdk_survivor.root_public_key,
+        sdk_group_id, sdk_old_epoch_key)
+      sdk_revoked_invoker.install_epoch_key(sdk_revoked.fabric_id, sdk_revoked.root_public_key,
+        sdk_group_id, sdk_old_epoch_key)
       sdk_recipient_address = Socket::Addrinfo.udp("official-jf-migration-target", E2E::DEVICE_PORT,
         family: Socket::Family::INET6).first.ip_address.address
       sdk_recipient = Socket::IPAddress.new(sdk_recipient_address, E2E::DEVICE_PORT)
@@ -2903,6 +2920,18 @@ describe "three provisioned Joint Fabric Administrators" do
       Matter::Controller::JointCommissioning.assert_status_success(sdk_add_acl)
       wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
         SDK_MIGRATION_ANCHOR_NODE_ID, sdk_cat_subject, 120.seconds)
+      sdk_group_acl = JfaRolloutDatastore::DatastoreAccessControlEntryStruct.new(
+        JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+        JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::Group,
+        [sdk_group_id.to_u64], nil)
+      sdk_add_group_acl = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_ACL_TO_NODE,
+        fields: JfaRolloutDatastore::AddACLToNodeRequest.new(
+          SDK_MIGRATION_ANCHOR_NODE_ID, sdk_group_acl).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_group_acl)
+      wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+        SDK_MIGRATION_ANCHOR_NODE_ID, sdk_group_id.to_u64, 120.seconds)
       sdk_key_deadline = Time.instant + 120.seconds
       loop do
         sdk_node_keys = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
@@ -2921,6 +2950,18 @@ describe "three provisioned Joint Fabric Administrators" do
         raise Matter::TimeoutError.new("SDK recipient did not commit initial keyed membership") if Time.instant >= sdk_key_deadline
         sleep 1.second
       end
+      sdk_anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_recipient, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_off = anchor_im.invoke(session: sdk_anchor_session, peer: sdk_recipient,
+        endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+        command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_off)
+      sdk_revoked_invoker.invoke(sdk_revoked.fabric_id, sdk_group_id,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+        root_public_key: sdk_revoked.root_public_key)
+      sleep 1.second
+      read_two_jfa_on_off(anchor_im, sdk_anchor_session, sdk_recipient).should be_true
       sdk_revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(sdk_revoked_client,
         sdk_recipient, sdk_revoked, peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
       assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, true)
@@ -2937,9 +2978,6 @@ describe "three provisioned Joint Fabric Administrators" do
         raise Matter::TimeoutError.new("SDK recipient keyed revocation did not become effective") if Time.instant >= sdk_rotation_deadline
         sleep 1.second
       end
-      sdk_anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
-        sdk_recipient, anchor_bootstrap.fabric,
-        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
       sdk_key_indices = anchor_im.invoke(session: sdk_anchor_session, peer: sdk_recipient,
         endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
         cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
@@ -2951,6 +2989,8 @@ describe "three provisioned Joint Fabric Administrators" do
         sdk_key_fields.to_slice).group_key_set_i_ds
       sdk_installed_key_ids.should contain(sdk_new_key_set_id)
       sdk_installed_key_ids.should_not contain(sdk_old_key_set_id)
+      sdk_survivor_invoker.install_epoch_key(sdk_survivor.fabric_id, sdk_survivor.root_public_key,
+        sdk_group_id, sdk_new_epoch_key)
       assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, false)
       sdk_renewed = sdk_survivor_store.load.fabric_for(sdk_survivor.fabric_id,
         sdk_survivor.root_public_key, sdk_survivor_id)
@@ -2958,6 +2998,20 @@ describe "three provisioned Joint Fabric Administrators" do
         sdk_recipient, sdk_renewed, peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
         timeout: E2E::COMMAND_TIMEOUT)
       assert_two_jfa_on_off_access(sdk_survivor_im, sdk_survivor_session, sdk_recipient, true)
+      sdk_off = anchor_im.invoke(session: sdk_anchor_session, peer: sdk_recipient,
+        endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+        command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_off)
+      sdk_revoked_invoker.invoke(sdk_revoked.fabric_id, sdk_group_id,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+        root_public_key: sdk_revoked.root_public_key)
+      sleep 1.second
+      read_two_jfa_on_off(anchor_im, sdk_anchor_session, sdk_recipient).should be_false
+      sdk_survivor_invoker.invoke(sdk_survivor.fabric_id, sdk_group_id,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+        root_public_key: sdk_survivor.root_public_key)
+      sleep 1.second
+      read_two_jfa_on_off(anchor_im, sdk_anchor_session, sdk_recipient).should be_true
       sdk_revoked_client.close
       sdk_survivor_client.close
     end
