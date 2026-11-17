@@ -9,6 +9,8 @@ module MatterCameraSnapshot
   EXAMPLE_PRODUCT_ID = 0x0553_u16
 
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
+  alias PowerSource = Matter::Cluster::PowerSource
+  alias TimeSync = Matter::Cluster::TimeSynchronization
 
   class Device < Matter::Device
     include Examples::Console
@@ -22,7 +24,13 @@ module MatterCameraSnapshot
 
     storage yaml: "matter_camera_snapshot_storage.yml"
 
-    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint 0_u16, device_type: Matter::DeviceType::POWER_SOURCE do
+      cluster PowerSource, feature_map: PowerSource::Feature::Wired,
+        description: "Mains", endpoint_list: [DEVICE_ENDPOINT_ID]
+      cluster TimeSync, feature_map: TimeSync::Feature::TimeZone
+    end
+
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::SNAPSHOT_CAMERA do
       cluster CameraAv,
         supported_stream_usages: [CameraAv::StreamUsage::LiveView],
         max_content_buffer_size: 65_000_u32,

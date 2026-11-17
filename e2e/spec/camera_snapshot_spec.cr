@@ -1,7 +1,8 @@
 require "./e2e_helper"
 
-private CAMERA_SNAPSHOT_CLUSTER  = "0x551"
-private CAMERA_SNAPSHOT_ENDPOINT = "1"
+private CAMERA_SNAPSHOT_CLUSTER        = "0x551"
+private CAMERA_SNAPSHOT_ENDPOINT       = "1"
+private SNAPSHOT_CAMERA_DEVICE_TYPE_ID = 0x0145_u32
 
 private def snapshot_command(device : E2E::Device, command : UInt32, payload : String) : E2E::Result
   device.chip("any", "command-by-id", CAMERA_SNAPSHOT_CLUSTER,
@@ -58,6 +59,17 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
 
   it "commissions SNP, allocates and captures a bounded still image" do
     device.commission!
+    snapshot_type = expect_success(device.read("descriptor", "device-type-list", 1))
+    snapshot_type.int("DeviceType").should eq(SNAPSHOT_CAMERA_DEVICE_TYPE_ID.to_i64)
+    snapshot_type.int("Revision").should eq(1_i64)
+    root_types = expect_success(device.read("descriptor", "device-type-list", 0)).ints("DeviceType")
+    root_types.should contain(Matter::DeviceType::POWER_SOURCE.to_i64)
+    root_servers = expect_success(device.read("descriptor", "server-list", 0)).int_list("ServerList")
+    root_servers.should contain(Matter::Cluster::PowerSource::CLUSTER_ID.to_i64)
+    root_servers.should contain(Matter::Cluster::TimeSynchronization::CLUSTER_ID.to_i64)
+    time_features = read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0)
+    (time_features & Matter::Cluster::TimeSynchronization::Feature::TimeZone.value.to_i64)
+      .should eq(Matter::Cluster::TimeSynchronization::Feature::TimeZone.value.to_i64)
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x0551_i64)
     snapshot_read(device, 0xFFFC_u32).output.should contain("12") # SNP + PRIV
     snapshot_read(device, 0x000A_u32).output.should contain("640")

@@ -1411,6 +1411,13 @@ module Matter
           raise ConfigurationError.new("Incomplete Camera composition: #{composition_errors.join("; ")}")
         end
       end
+      if device_types.any? { |type| type.device_type_id.id == DeviceType::SNAPSHOT_CAMERA }
+        composition_errors = CameraComposition.validate_snapshot(@node, endpoint_id)
+        unless composition_errors.empty?
+          @node.remove_endpoint(endpoint_id)
+          raise ConfigurationError.new("Incomplete Snapshot Camera composition: #{composition_errors.join("; ")}")
+        end
+      end
       basic_info.increase_configuration_version if @started
       refresh_parts_lists(notify_subscribers)
       start_time_zone_polling if @started

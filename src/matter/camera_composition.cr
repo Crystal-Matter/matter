@@ -79,5 +79,43 @@ module Matter
       end
       errors
     end
+
+    # Snapshot Camera has no WebRTC role. Its single mandatory AV feature is
+    # SNP; ADO and VDO are disallowed by the Matter 1.6 device type.
+    def self.validate_snapshot(node : Node, snapshot_endpoint_id : UInt16) : Array(String)
+      errors = [] of String
+      snapshot = node.endpoint(snapshot_endpoint_id)
+      return ["Snapshot Camera endpoint #{snapshot_endpoint_id} is absent"] unless snapshot
+
+      if av = snapshot.get_cluster(Cluster::CameraAvStreamManagement)
+        features = av.feature_map
+        errors << "Snapshot Camera AV Stream Management needs Snapshot" unless features.snapshot?
+        errors << "Snapshot Camera AV Stream Management disallows Audio" if features.audio?
+        errors << "Snapshot Camera AV Stream Management disallows Video" if features.video?
+      else
+        errors << "Snapshot Camera AV Stream Management server is absent"
+      end
+      if zone = snapshot.get_cluster(Cluster::ZoneManagement)
+        errors << "Snapshot Camera Zone Management needs TWODCART" unless zone.feature_map.two_d_cartesian_zone?
+      end
+
+      root = node.endpoint(Node::ROOT_ENDPOINT_ID)
+      return errors << "Root Node endpoint is absent" unless root
+
+      unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::ROOT_NODE }
+        errors << "Root Node device type is absent on Root Node endpoint"
+      end
+      unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::POWER_SOURCE } &&
+             root.has_cluster?(POWER_SOURCE_CLUSTER_ID)
+        errors << "Power Source device type and server must be on Root Node"
+      end
+      if time_sync = root.get_cluster(Cluster::TimeSynchronization)
+        features = time_sync.feature_map.value.to_u32
+        errors << "Time Synchronization TimeZone feature is absent on Root Node" if features & TIME_ZONE_BIT == 0
+      else
+        errors << "Time Synchronization server is absent on Root Node"
+      end
+      errors
+    end
   end
 end

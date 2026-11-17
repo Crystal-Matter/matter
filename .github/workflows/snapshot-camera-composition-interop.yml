@@ -1,0 +1,29 @@
+name: Snapshot Camera composition interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/snapshot-camera-composition-interop.yml'
+      - 'e2e/spec/camera_snapshot_spec.cr'
+      - 'examples/matter_camera_snapshot_device.cr'
+      - 'src/matter/camera_composition.cr'
+      - 'src/matter/device_type.cr'
+      - 'src/matter/node.cr'
+      - 'src/matter/device/runtime.cr'
+
+jobs:
+  official-chip-tool-snapshot-camera:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify Snapshot Camera topology and JPEG capture with official chip-tool
+        run: ./test --focused --service camera-snapshot -- e2e/spec/camera_snapshot_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-camera-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn
