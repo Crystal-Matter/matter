@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   delivering keyed membership, preserving the full Datastore name. Exercise
   keyed group and CAT revocation against a migrated pinned SDK device.
 
+### Matter 1.6 Camera Controller device composition
+
+- Declare Camera Controller device type 0x0147 revision 1 with mandatory
+  WebRTC Requestor server and Provider client roles; verify the synthetic
+  endpoint topology and CASE signaling with official chip-tool.
+
 ### Matter 1.6 Snapshot Camera device composition
 
 - Declare Snapshot Camera device type 0x0145 revision 1, enforce SNP-only AV

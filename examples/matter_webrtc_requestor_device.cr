@@ -9,6 +9,7 @@ module MatterWebrtcRequestor
   EXAMPLE_PRODUCT_ID = 0x0554_u16
 
   alias Requestor = Matter::Cluster::WebRtcTransportRequestor
+  alias Provider = Matter::Cluster::WebRtcTransportProvider
   alias Status = Matter::InteractionModel::Status
 
   class DecliningPeer < Requestor::Peer
@@ -45,8 +46,9 @@ module MatterWebrtcRequestor
 
     storage yaml: "matter_webrtc_requestor_storage.yml"
 
-    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::CAMERA_CONTROLLER do
       cluster Requestor, DecliningPeer.new
+      client_cluster Provider::CLUSTER_ID
     end
 
     protected def commissioned(fabric : Matter::Fabric) : Nil

@@ -80,6 +80,7 @@ module Matter
     VIDEO_REMOTE_CONTROL = 0x002A_u32 # Video Remote Control
     CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
     SNAPSHOT_CAMERA      = 0x0145_u32 # Snapshot Camera (Matter 1.6)
+    CAMERA_CONTROLLER    = 0x0147_u32 # Camera Controller (Matter 1.6)
 
     getter device_type_id : DataType::DeviceTypeId
     getter name : String
@@ -278,6 +279,19 @@ module Matter
           Cluster::CameraAvSettingsUserLevelManagement::CLUSTER_ID,
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE]
+      )
+    end
+
+    def self.camera_controller : DeviceType
+      new(
+        DataType::DeviceTypeId.new(CAMERA_CONTROLLER),
+        "Camera Controller",
+        1_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::WebRtcTransportRequestor::CLUSTER_ID,
+        ],
+        required_client_clusters: [Cluster::WebRtcTransportProvider::CLUSTER_ID]
       )
     end
 
@@ -586,6 +600,7 @@ module Matter
       when BASIC_VIDEO_PLAYER             then basic_video_player
       when CAMERA                         then camera
       when SNAPSHOT_CAMERA                then snapshot_camera
+      when CAMERA_CONTROLLER              then camera_controller
       else
         new(
           DataType::DeviceTypeId.new(device_type),
@@ -645,6 +660,7 @@ module Matter
       when BASIC_VIDEO_PLAYER             then "Basic Video Player"
       when CAMERA                         then "Camera"
       when SNAPSHOT_CAMERA                then "Snapshot Camera"
+      when CAMERA_CONTROLLER              then "Camera Controller"
       when CASTING_VIDEO_PLAYER           then "Casting Video Player"
       when SPEAKER                        then "Speaker"
       when CONTENT_APP                    then "Content App"
