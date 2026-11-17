@@ -284,7 +284,8 @@ module Matter
         else
           group = store.group_list.find(&.group_id.==(entry.group_id.to_u64)) ||
                   raise Matter::ConfigurationError.new("Datastore group #{entry.group_id} is missing")
-          request = Cluster::Groups::AddGroupRequest.new(DataType::GroupId.new(entry.group_id), group.friendly_name)
+          request = Cluster::Groups::AddGroupRequest.new(DataType::GroupId.new(entry.group_id),
+            legacy_group_name(group.friendly_name))
           response_id = Cluster::Groups::CMD_ADD_GROUP_RESPONSE
           command_id = Cluster::Groups::CMD_ADD_GROUP
         end
@@ -309,6 +310,23 @@ module Matter
         end
         unless group_id.id == entry.group_id
           raise Matter::ProtocolError.new("Groups response confirmed a different group")
+        end
+      end
+
+      # Datastore FriendlyName permits 32 bytes, but legacy Groups GroupName
+      # permits 16. Keep the full Datastore name and send a valid UTF-8 prefix
+      # to devices that only implement Groups.
+      private def legacy_group_name(name : String) : String
+        return name if name.bytesize <= Cluster::Groups::GROUP_NAME_MAX_LENGTH
+
+        used_bytes = 0
+        String.build do |io|
+          name.each_char do |char|
+            char_bytes = char.to_s.bytesize
+            break if used_bytes + char_bytes > Cluster::Groups::GROUP_NAME_MAX_LENGTH
+            io << char
+            used_bytes += char_bytes
+          end
         end
       end
 
