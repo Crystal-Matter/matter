@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Snapshot Camera device composition
+
+- Declare Snapshot Camera device type 0x0145 revision 1, enforce SNP-only AV
+  features and required Root Node Power Source/TimeZone topology, and verify
+  the synthetic endpoint and decodable JPEG capture with official chip-tool.
+
 ### Matter 1.6 Ambient Context Sensing complete feature-map matrix
 
 - Add OC+AUD+PRED with live sound detection, tagged crowd forecasts,
