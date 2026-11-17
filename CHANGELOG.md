@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Joint Fabric keyed revocation on an official SDK device
+
+- Bound Datastore FriendlyName to the legacy Groups GroupName wire limit when
+  delivering keyed membership, preserving the full Datastore name. Exercise
+  keyed group and CAT revocation against a migrated pinned SDK device.
+
 ### Matter 1.6 Snapshot Camera device composition
 
 - Declare Snapshot Camera device type 0x0145 revision 1, enforce SNP-only AV
