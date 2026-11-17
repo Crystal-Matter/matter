@@ -2835,6 +2835,127 @@ describe "three provisioned Joint Fabric Administrators" do
       intermediate_cert: cross_signed_icac,
       intermediate_private_key: joiner_bootstrap.fabric.intermediate_private_key.as(Bytes),
       ipk_epoch_keys: b_controller.ipk_epoch_keys)
+    if ENV["MATTER_E2E_SDK16_MIGRATION"]? == "1"
+      # Exercise Core §11.24.4.5 and §11.24.4.9 key/CAT revocation on the
+      # independent SDK recipient after its migration to the Anchor fabric.
+      sdk_group_id = 14_u16
+      sdk_group_cat = 0x1238_u16
+      sdk_group_version = 2_u16
+      sdk_old_key_set_id = 14_u16
+      sdk_new_key_set_id = 15_u16
+      sdk_old_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+      sdk_new_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+      sdk_survivor_id = 0xA109_u64
+      sdk_revoked_id = 0xA10A_u64
+      sdk_survivor = b_issuer.delegate_controller(joined_identity,
+        sdk_survivor_id, sdk_group_cat, sdk_group_version, crypto)
+      sdk_revoked = b_issuer.delegate_controller(joined_identity,
+        sdk_revoked_id, sdk_group_cat, sdk_group_version, crypto)
+      sdk_survivor_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+        File.join(E2E::LOG_DIR, "joint-fabric-sdk-keyed-survivor.yml")))
+      sdk_revoked_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+        File.join(E2E::LOG_DIR, "joint-fabric-sdk-keyed-revoked.yml")))
+      Matter::Controller::SharedFabric.install(sdk_survivor_store, sdk_survivor)
+      Matter::Controller::SharedFabric.install(sdk_revoked_store, sdk_revoked)
+      sdk_survivor_client = Matter::Controller::Client.new(
+        counter_lease: sdk_survivor_store.counter_lease(sdk_survivor_id))
+      sdk_revoked_client = Matter::Controller::Client.new(
+        counter_lease: sdk_revoked_store.counter_lease(sdk_revoked_id))
+      sdk_survivor_im = Matter::Controller::ImClient.new(sdk_survivor_client, E2E::COMMAND_TIMEOUT)
+      sdk_revoked_im = Matter::Controller::ImClient.new(sdk_revoked_client, E2E::COMMAND_TIMEOUT)
+      sdk_recipient_address = Socket::Addrinfo.udp("official-jf-migration-target", E2E::DEVICE_PORT,
+        family: Socket::Family::INET6).first.ip_address.address
+      sdk_recipient = Socket::IPAddress.new(sdk_recipient_address, E2E::DEVICE_PORT)
+      sdk_old_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(sdk_old_key_set_id,
+        JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        sdk_old_epoch_key, 1_u64, nil, nil, nil, nil)
+      sdk_new_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(sdk_new_key_set_id,
+        JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        sdk_new_epoch_key, 2_u64, nil, nil, nil, nil)
+      sdk_add_key = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_KEY_SET,
+        fields: JfaRolloutDatastore::AddKeySetRequest.new(sdk_old_key_set).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_key)
+      sdk_add_group = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_GROUP,
+        fields: JfaRolloutDatastore::AddGroupRequest.new(sdk_group_id, "SDK revoked B controllers",
+          sdk_old_key_set_id, sdk_group_cat, sdk_group_version,
+          JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_group)
+      sdk_add_membership = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE,
+        fields: JfaRolloutDatastore::AddGroupIDToEndpointForNodeRequest.new(
+          SDK_MIGRATION_ANCHOR_NODE_ID, 1_u16, sdk_group_id).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_membership)
+      sdk_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+        Matter::DataType::CaseAuthenticatedTag.create(sdk_group_cat, sdk_group_version)).id
+      sdk_acl = JfaRolloutDatastore::DatastoreAccessControlEntryStruct.new(
+        JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+        JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+        [sdk_cat_subject], nil)
+      sdk_add_acl = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_ACL_TO_NODE,
+        fields: JfaRolloutDatastore::AddACLToNodeRequest.new(SDK_MIGRATION_ANCHOR_NODE_ID, sdk_acl).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_acl)
+      wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+        SDK_MIGRATION_ANCHOR_NODE_ID, sdk_cat_subject, 120.seconds)
+      sdk_key_deadline = Time.instant + 120.seconds
+      loop do
+        sdk_node_keys = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+        sdk_memberships = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointGroupIDEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+        break if sdk_node_keys.any? { |entry| entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
+                 entry.group_key_set_id == sdk_old_key_set_id && entry.status_entry.state.committed? } &&
+                 sdk_memberships.any? { |entry| entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
+                 entry.group_id == sdk_group_id && entry.status_entry.state.committed? }
+        raise Matter::TimeoutError.new("SDK recipient did not commit initial keyed membership") if Time.instant >= sdk_key_deadline
+        sleep 1.second
+      end
+      sdk_revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(sdk_revoked_client,
+        sdk_recipient, sdk_revoked, peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, true)
+      sdk_rotation = Matter::Controller::SharedFabric::JointGroupKeyRotation.new(
+        sdk_old_key_set_id, sdk_new_key_set)
+      sdk_receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+        anchor_im, anchor_session, anchor_peer, 1_u16, sdk_group_id, sdk_revoked,
+        [{sdk_survivor_store, sdk_survivor_id}], b_signing_authority, 0xA102_u64,
+        key_rotation: sdk_rotation)
+      sdk_rotation_deadline = Time.instant + 120.seconds
+      loop do
+        break if Matter::Controller::SharedFabric.joint_group_revocation_status(
+                   anchor_im, anchor_session, anchor_peer, 1_u16, sdk_receipt).effective?
+        raise Matter::TimeoutError.new("SDK recipient keyed revocation did not become effective") if Time.instant >= sdk_rotation_deadline
+        sleep 1.second
+      end
+      sdk_anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_recipient, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_key_indices = anchor_im.invoke(session: sdk_anchor_session, peer: sdk_recipient,
+        endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+        cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+        command_id: Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+        fields: Bytes.empty)
+      sdk_key_fields = sdk_key_indices.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+        .command_fields.as(TLV::Any)
+      sdk_installed_key_ids = Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(
+        sdk_key_fields.to_slice).group_key_set_i_ds
+      sdk_installed_key_ids.should contain(sdk_new_key_set_id)
+      sdk_installed_key_ids.should_not contain(sdk_old_key_set_id)
+      assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, false)
+      sdk_renewed = sdk_survivor_store.load.fabric_for(sdk_survivor.fabric_id,
+        sdk_survivor.root_public_key, sdk_survivor_id)
+      sdk_survivor_session = Matter::Controller::Pairing::CasePairing.new.pair(sdk_survivor_client,
+        sdk_recipient, sdk_renewed, peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+        timeout: E2E::COMMAND_TIMEOUT)
+      assert_two_jfa_on_off_access(sdk_survivor_im, sdk_survivor_session, sdk_recipient, true)
+      sdk_revoked_client.close
+      sdk_survivor_client.close
+    end
     revocation = Matter::Controller::SharedFabric.stage_joint_group_revocation(
       anchor_im, anchor_session, anchor_peer, 1_u16, b_group_id, revoked_controller,
       [{b_controller_store, b_controller_node_id}], b_signing_authority, 0xA102_u64)
