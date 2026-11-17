@@ -1,8 +1,9 @@
 require "./spec_helper"
 require "../src/matter/camera_composition"
 
-private CAMERA_ENDPOINT = Matter::DataType::EndpointNumber.new(1_u16)
-private ROOT_ENDPOINT   = Matter::DataType::EndpointNumber.new(0_u16)
+private CAMERA_ENDPOINT         = Matter::DataType::EndpointNumber.new(1_u16)
+private ROOT_ENDPOINT           = Matter::DataType::EndpointNumber.new(0_u16)
+private SNAPSHOT_CAMERA_TYPE_ID = 0x0145_u32
 private alias CameraAv = Matter::Cluster::CameraAvStreamManagement
 private alias WebRtcProvider = Matter::Cluster::WebRtcTransportProvider
 
@@ -27,6 +28,38 @@ private class NoMediaPeer < WebRtcProvider::Peer
   end
 
   def end_session(session : WebRtcProvider::Session, reason : WebRtcProvider::EndReason) : Nil
+  end
+end
+
+describe "Matter 1.6 Snapshot Camera composition" do
+  it "defines Snapshot Camera revision 1 with the required SNP server and Root Node dependencies" do
+    snapshot = Matter::DeviceType.for(SNAPSHOT_CAMERA_TYPE_ID)
+
+    snapshot.name.should eq("Snapshot Camera")
+    snapshot.revision.should eq(1_u16)
+    snapshot.required_server_clusters.should contain(CameraAv::CLUSTER_ID)
+    snapshot.required_node_device_types.should contain(Matter::DeviceType::ROOT_NODE)
+    snapshot.required_node_device_types.should contain(Matter::DeviceType::POWER_SOURCE)
+  end
+
+  it "rejects an advertised Snapshot Camera without SNP or its Root Node conditions" do
+    node = Matter::Node.new
+    node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))
+    snapshot = Matter::Endpoint.new(CAMERA_ENDPOINT, Matter::DeviceType.for(SNAPSHOT_CAMERA_TYPE_ID))
+    snapshot.add_cluster(CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_000_u32,
+      max_network_bandwidth: 2_000_000_u32,
+      microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+        [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+      feature_map: CameraAv::Feature::Audio))
+    node.add_endpoint(snapshot)
+
+    errors = node.validate[CAMERA_ENDPOINT.number].join
+    errors.should contain("needs Snapshot")
+    errors.should contain("disallows Audio")
+    errors.should contain("Power Source")
+    errors.should contain("Time Synchronization")
   end
 end
 
