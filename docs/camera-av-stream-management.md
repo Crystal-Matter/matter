@@ -124,7 +124,12 @@ as nullable Booleans and must apply them before returning success. The library
 commits both stream settings only after that callback succeeds and persists
 them across restart. The host remains responsible for rendering overlays into
 captured image bytes. The two-argument `on_snapshot_modify` remains available for
-WMARK-only hosts. Camera device type topology remains unavailable.
+WMARK-only hosts. Snapshot Camera device type `0x0145` revision 1 is available
+for SNP-only endpoints and requires Root Node Power Source and TimeZone
+composition; ADO and VDO are disallowed. The example advertises that type
+with a fixed JPEG and an official chip-tool topology/capture check. A live
+sensor and host resource integration are still required for a production
+Snapshot Camera.
 
 Applications should not present the synthetic snapshot fixture as complete
 Camera conformance.

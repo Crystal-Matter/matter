@@ -61,6 +61,81 @@ describe "Matter 1.6 Snapshot Camera composition" do
     errors.should contain("Power Source")
     errors.should contain("Time Synchronization")
   end
+
+  it "rejects VDO and ADO features on a Snapshot Camera" do
+    node = Matter::Node.new
+    node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))
+    snapshot = Matter::Endpoint.new(CAMERA_ENDPOINT, Matter::DeviceType.snapshot_camera)
+    snapshot.add_cluster(CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_000_u32,
+      max_network_bandwidth: 2_000_000_u32,
+      microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+        [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+      video_sensor_params: CameraAv::VideoSensorParams.new(640_u16, 480_u16, 10_u16),
+      min_viewport_resolution: CameraAv::VideoResolution.new(160_u16, 120_u16),
+      rate_distortion_trade_off_points: [CameraAv::RateDistortionPoint.new(
+        CameraAv::VideoCodec::H264, CameraAv::VideoResolution.new(320_u16, 240_u16), 200_000_u32)],
+      snapshot_capabilities: [CameraAv::SnapshotCapability.new(
+        CameraAv::VideoResolution.new(640_u16, 480_u16), 10_u16,
+        CameraAv::ImageCodec::Jpeg, true, true)],
+      max_concurrent_encoders: 1_u8,
+      max_encoded_pixel_rate: 3_072_000_u32,
+      feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Audio | CameraAv::Feature::Video))
+    node.add_endpoint(snapshot)
+
+    errors = node.validate[CAMERA_ENDPOINT.number].join
+    errors.should contain("disallows Audio")
+    errors.should contain("disallows Video")
+    errors.should_not contain("needs Snapshot")
+  end
+
+  it "requires Root TimeZone and TWODCART when Zone Management is installed" do
+    node = Matter::Node.new
+    root = Matter::Endpoint.new(ROOT_ENDPOINT)
+    root.add_cluster(Matter::Cluster::TimeSynchronization.new(ROOT_ENDPOINT))
+    node.add_endpoint(root)
+    snapshot = Matter::Endpoint.new(CAMERA_ENDPOINT, Matter::DeviceType.snapshot_camera)
+    snapshot.add_cluster(CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_000_u32,
+      max_network_bandwidth: 2_000_000_u32,
+      snapshot_capabilities: [CameraAv::SnapshotCapability.new(
+        CameraAv::VideoResolution.new(640_u16, 480_u16), 10_u16,
+        CameraAv::ImageCodec::Jpeg, true, true)],
+      max_concurrent_encoders: 1_u8,
+      max_encoded_pixel_rate: 3_072_000_u32,
+      feature_map: CameraAv::Feature::Snapshot))
+    snapshot.add_cluster(Matter::Cluster::ZoneManagement.new(CAMERA_ENDPOINT,
+      feature_map: Matter::Cluster::ZoneManagement::Feature::None))
+    node.add_endpoint(snapshot)
+
+    errors = node.validate[CAMERA_ENDPOINT.number].join
+    errors.should contain("TimeZone")
+    errors.should contain("TWODCART")
+    errors.should_not contain("needs Snapshot")
+  end
+
+  it "rolls back a dynamic Snapshot Camera endpoint when Root conditions are incomplete" do
+    device = CameraCompositionProbeDevice.new(Matter::Storage::Memory.new)
+    av = CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_000_u32,
+      max_network_bandwidth: 2_000_000_u32,
+      snapshot_capabilities: [CameraAv::SnapshotCapability.new(
+        CameraAv::VideoResolution.new(640_u16, 480_u16), 10_u16,
+        CameraAv::ImageCodec::Jpeg, true, true)],
+      max_concurrent_encoders: 1_u8,
+      max_encoded_pixel_rate: 3_072_000_u32,
+      feature_map: CameraAv::Feature::Snapshot)
+
+    expect_raises(Matter::ConfigurationError, /Incomplete Snapshot Camera composition/) do
+      device.add_endpoint(CAMERA_ENDPOINT.number, Matter::DeviceType::SNAPSHOT_CAMERA,
+        [av] of Matter::Cluster::Base)
+    end
+    device.node.endpoint(CAMERA_ENDPOINT.number).should be_nil
+    device.node.endpoint!(ROOT_ENDPOINT.number).descriptor.parts_list.should_not contain(CAMERA_ENDPOINT.number)
+  end
 end
 
 private class CameraCompositionProbeDevice < Matter::Device

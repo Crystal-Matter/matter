@@ -79,6 +79,7 @@ module Matter
     CASTING_VIDEO_CLIENT = 0x0029_u32 # Casting Video Client
     VIDEO_REMOTE_CONTROL = 0x002A_u32 # Video Remote Control
     CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
+    SNAPSHOT_CAMERA      = 0x0145_u32 # Snapshot Camera (Matter 1.6)
 
     getter device_type_id : DataType::DeviceTypeId
     getter name : String
@@ -258,6 +259,25 @@ module Matter
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE],
         required_client_clusters: [Cluster::WebRtcTransportRequestor::CLUSTER_ID]
+      )
+    end
+
+    def self.snapshot_camera : DeviceType
+      new(
+        DataType::DeviceTypeId.new(SNAPSHOT_CAMERA),
+        "Snapshot Camera",
+        1_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::CameraAvStreamManagement::CLUSTER_ID,
+        ],
+        optional_server_clusters: [
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::OccupancySensing::CLUSTER_ID,
+          Cluster::ZoneManagement::CLUSTER_ID,
+          Cluster::CameraAvSettingsUserLevelManagement::CLUSTER_ID,
+        ],
+        required_node_device_types: [ROOT_NODE, POWER_SOURCE]
       )
     end
 
@@ -565,6 +585,7 @@ module Matter
       when FAN                            then fan
       when BASIC_VIDEO_PLAYER             then basic_video_player
       when CAMERA                         then camera
+      when SNAPSHOT_CAMERA                then snapshot_camera
       else
         new(
           DataType::DeviceTypeId.new(device_type),
@@ -623,6 +644,7 @@ module Matter
       when FAN                            then "Fan"
       when BASIC_VIDEO_PLAYER             then "Basic Video Player"
       when CAMERA                         then "Camera"
+      when SNAPSHOT_CAMERA                then "Snapshot Camera"
       when CASTING_VIDEO_PLAYER           then "Casting Video Player"
       when SPEAKER                        then "Speaker"
       when CONTENT_APP                    then "Content App"

@@ -193,6 +193,8 @@ module Matter
           end
           if device_type.device_type_id.id == DeviceType::CAMERA
             endpoint_errors.concat(CameraComposition.validate(self, endpoint_id))
+          elsif device_type.device_type_id.id == DeviceType::SNAPSHOT_CAMERA
+            endpoint_errors.concat(CameraComposition.validate_snapshot(self, endpoint_id))
           end
         end
         errors[endpoint_id] = endpoint_errors unless endpoint_errors.empty?
