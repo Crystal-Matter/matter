@@ -2909,10 +2909,15 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
         sdk_memberships = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointGroupIDEntryStruct),
           anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
-        break if sdk_node_keys.any? { |entry| entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
-                 entry.group_key_set_id == sdk_old_key_set_id && entry.status_entry.state.committed? } &&
-                 sdk_memberships.any? { |entry| entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
-                 entry.group_id == sdk_group_id && entry.status_entry.state.committed? }
+        sdk_key_committed = sdk_node_keys.any? do |entry|
+          entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
+            entry.group_key_set_id == sdk_old_key_set_id && entry.status_entry.state.committed?
+        end
+        sdk_membership_committed = sdk_memberships.any? do |entry|
+          entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID &&
+            entry.group_id == sdk_group_id && entry.status_entry.state.committed?
+        end
+        break if sdk_key_committed && sdk_membership_committed
         raise Matter::TimeoutError.new("SDK recipient did not commit initial keyed membership") if Time.instant >= sdk_key_deadline
         sleep 1.second
       end
