@@ -1,15 +1,41 @@
 require "./support/console"
 require "./support/main"
 
-# Synthetic ADO endpoint for wire interoperability. The callbacks admit and
-# release logical test streams; production hosts must attach a real microphone,
-# encoder and transport before advertising the feature.
+# Synthetic Audio Doorbell ADO endpoint for wire interoperability. The callbacks
+# admit and release logical test streams; production hosts must attach a real
+# microphone, physical switch, encoder and transport before use.
 module MatterCameraAudio
   DEVICE_ENDPOINT_ID = 1_u16
 
   EXAMPLE_PRODUCT_ID = 0x0551_u16
 
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
+  alias Provider = Matter::Cluster::WebRtcTransportProvider
+  alias Requestor = Matter::Cluster::WebRtcTransportRequestor
+  alias Chime = Matter::Cluster::Chime
+  alias PowerSource = Matter::Cluster::PowerSource
+  alias Status = Matter::InteractionModel::Status
+
+  class NoMediaPeer < Provider::Peer
+    def solicit_offer(session : Provider::Session, request : Provider::SolicitOfferRequest) : Status
+      Status.invalid_in_state
+    end
+
+    def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
+      Status.invalid_in_state
+    end
+
+    def accept_answer(session : Provider::Session, sdp : String) : Status
+      Status.invalid_in_state
+    end
+
+    def add_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Status
+      Status.invalid_in_state
+    end
+
+    def end_session(session : Provider::Session, reason : Provider::EndReason) : Nil
+    end
+  end
 
   class Device < Matter::Device
     include Examples::Console
@@ -23,7 +49,16 @@ module MatterCameraAudio
 
     storage yaml: "matter_camera_audio_storage.yml"
 
-    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint 0_u16, device_type: Matter::DeviceType::POWER_SOURCE do
+      cluster PowerSource, feature_map: PowerSource::Feature::Wired,
+        description: "Mains", endpoint_list: [DEVICE_ENDPOINT_ID]
+      cluster Matter::Cluster::TlsCertificateManagement
+    end
+
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AUDIO_DOORBELL do
+      cluster Matter::Cluster::Identify
+      cluster Matter::Cluster::Switch,
+        feature_map: Matter::Cluster::Switch::Feature::MomentarySwitch
       cluster CameraAv,
         microphone_capabilities: CameraAv::AudioCapabilities.new(2_u8,
           [CameraAv::AudioCodec::Opus], [16_000_u32, 48_000_u32], [16_u8]),
@@ -34,6 +69,15 @@ module MatterCameraAudio
         max_content_buffer_size: 65_536_u32,
         max_network_bandwidth: 96_000_u32,
         feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Privacy | CameraAv::Feature::Speaker
+      client_cluster Requestor::CLUSTER_ID
+      client_cluster Chime::CLUSTER_ID
+    end
+
+    protected def device_clusters : Array(Matter::Cluster::Base)
+      clusters = super
+      camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
+      clusters << Provider.new(camera.endpoint_id, camera, NoMediaPeer.new)
+      clusters
     end
 
     protected def before_start : Nil

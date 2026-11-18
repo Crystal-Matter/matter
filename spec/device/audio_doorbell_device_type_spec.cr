@@ -38,6 +38,10 @@ private def audio_doorbell_endpoint(switch_feature : Matter::Cluster::Switch::Fe
     max_network_bandwidth: 2_000_000_u32,
     microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
       [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+    video_sensor_params: CameraAv::VideoSensorParams.new(640_u16, 480_u16, 10_u16),
+    min_viewport_resolution: CameraAv::VideoResolution.new(160_u16, 120_u16),
+    rate_distortion_trade_off_points: [CameraAv::RateDistortionPoint.new(
+      CameraAv::VideoCodec::H264, CameraAv::VideoResolution.new(320_u16, 240_u16), 200_000_u32)],
     snapshot_capabilities: [CameraAv::SnapshotCapability.new(
       CameraAv::VideoResolution.new(640_u16, 480_u16), 10_u16,
       CameraAv::ImageCodec::Jpeg, true, true)],
@@ -86,5 +90,14 @@ describe "Matter 1.6 Audio Doorbell device composition" do
     errors.should contain("disallows Snapshot")
     errors.should contain("Power Source")
     errors.should contain("TLS Certificate Management")
+  end
+
+  it "rejects VDO even when ADO is enabled" do
+    node = Matter::Node.new
+    node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))
+    node.add_endpoint(audio_doorbell_endpoint(Matter::Cluster::Switch::Feature::MomentarySwitch,
+      CameraAv::Feature::Audio | CameraAv::Feature::Video))
+
+    node.validate[AUDIO_DOORBELL_ENDPOINT.number].join.should contain("disallows Video")
   end
 end

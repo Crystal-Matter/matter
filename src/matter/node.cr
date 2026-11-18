@@ -195,6 +195,8 @@ module Matter
             endpoint_errors.concat(CameraComposition.validate(self, endpoint_id))
           elsif device_type.device_type_id.id == DeviceType::SNAPSHOT_CAMERA
             endpoint_errors.concat(CameraComposition.validate_snapshot(self, endpoint_id))
+          elsif device_type.device_type_id.id == DeviceType::AUDIO_DOORBELL
+            endpoint_errors.concat(CameraComposition.validate_audio_doorbell(self, endpoint_id))
           end
         end
         errors[endpoint_id] = endpoint_errors unless endpoint_errors.empty?
