@@ -117,5 +117,37 @@ module Matter
       end
       errors
     end
+
+    # Audio Doorbell revision 2 is an ADO-only camera topology with physical
+    # Switch and Chime roles checked by its DeviceType definition.
+    def self.validate_audio_doorbell(node : Node, doorbell_endpoint_id : UInt16) : Array(String)
+      errors = [] of String
+      doorbell = node.endpoint(doorbell_endpoint_id)
+      return ["Audio Doorbell endpoint #{doorbell_endpoint_id} is absent"] unless doorbell
+
+      if av = doorbell.get_cluster(Cluster::CameraAvStreamManagement)
+        features = av.feature_map
+        errors << "Audio Doorbell Camera AV Stream Management needs Audio" unless features.audio?
+        errors << "Audio Doorbell Camera AV Stream Management disallows Snapshot" if features.snapshot?
+        errors << "Audio Doorbell Camera AV Stream Management disallows Video" if features.video?
+      else
+        errors << "Audio Doorbell Camera AV Stream Management server is absent"
+      end
+
+      root = node.endpoint(Node::ROOT_ENDPOINT_ID)
+      return errors << "Root Node endpoint is absent" unless root
+
+      unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::ROOT_NODE }
+        errors << "Root Node device type is absent on Root Node endpoint"
+      end
+      unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::POWER_SOURCE } &&
+             root.has_cluster?(POWER_SOURCE_CLUSTER_ID)
+        errors << "Power Source device type and server must be on Root Node"
+      end
+      unless root.get_cluster(Cluster::TlsCertificateManagement)
+        errors << "TLS Certificate Management server is absent on Root Node"
+      end
+      errors
+    end
   end
 end

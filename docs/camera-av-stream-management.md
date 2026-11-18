@@ -83,12 +83,17 @@ resources must be reopened explicitly. The next video stream ID persists, avoidi
 reuse of a pre-restart ID. SNP allocations are retained and require host callback
 rebinding.
 
-The [synthetic audio example](../examples/matter_camera_audio_device.cr) and
-[synthetic video example](../examples/matter_camera_video_device.cr) use
-Aggregator endpoints for official chip-tool wire checks. Their callbacks accept
-logical streams without producing media. Production devices need actual sensors,
-encoders, transports, and hardware privacy integration before advertising ADO
-or VDO. A separate [test-only Camera media
+The [synthetic audio example](../examples/matter_camera_audio_device.cr)
+advertises Audio Doorbell `0x0141` revision 2 with required Identify, Switch,
+Camera AV ADO, WebRTC Provider, Requestor client, Chime client, and Root Power
+Source/TLS Certificate Management roles. Official chip-tool checks the topology
+and logical ADO allocation; the fixture chooses a momentary Switch profile and
+its Provider declines media signaling. The
+[synthetic video example](../examples/matter_camera_video_device.cr)
+uses an Aggregator endpoint for wire checks. Their callbacks accept logical
+streams without producing media. Production devices need actual sensors,
+physical switch, encoders, transports, and hardware privacy integration before
+advertising ADO or VDO. A separate [test-only Camera media
 fixture](camera-webrtc-host-signaling.md) sends synthetic H.264 video and Opus
 audio to an independent Matter.js/Chrome Requestor and verifies decoded media.
 Production camera topology and media, Push AV delivery, snapshot negotiation,

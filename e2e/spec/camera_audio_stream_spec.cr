@@ -1,7 +1,8 @@
 require "./e2e_helper"
 
-private CAMERA_AUDIO_CLUSTER  = "0x551"
-private CAMERA_AUDIO_ENDPOINT = "1"
+private CAMERA_AUDIO_CLUSTER          = "0x551"
+private CAMERA_AUDIO_ENDPOINT         = "1"
+private AUDIO_DOORBELL_DEVICE_TYPE_ID = 0x0141_u32
 
 private def read_camera_audio(device : E2E::Device, attribute : UInt32) : E2E::Result
   expect_success(device.chip("any", "read-by-id", CAMERA_AUDIO_CLUSTER,
@@ -24,6 +25,21 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
 
   it "commissions a synthetic ADO endpoint and reads the mandatory capabilities" do
     device.commission!
+    doorbell_type = expect_success(device.read("descriptor", "device-type-list", 1))
+    doorbell_type.int("DeviceType").should eq(AUDIO_DOORBELL_DEVICE_TYPE_ID.to_i64)
+    doorbell_type.int("Revision").should eq(2_i64)
+    servers = expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList")
+    servers.should contain(Matter::Cluster::Identify::CLUSTER_ID.to_i64)
+    servers.should contain(Matter::Cluster::Switch::CLUSTER_ID.to_i64)
+    servers.should contain(Matter::Cluster::WebRtcTransportProvider::CLUSTER_ID.to_i64)
+    clients = expect_success(device.read("descriptor", "client-list", 1)).int_list("ClientList")
+    clients.should contain(Matter::Cluster::WebRtcTransportRequestor::CLUSTER_ID.to_i64)
+    clients.should contain(Matter::Cluster::Chime::CLUSTER_ID.to_i64)
+    root_types = expect_success(device.read("descriptor", "device-type-list", 0)).ints("DeviceType")
+    root_types.should contain(Matter::DeviceType::POWER_SOURCE.to_i64)
+    root_servers = expect_success(device.read("descriptor", "server-list", 0)).int_list("ServerList")
+    root_servers.should contain(Matter::Cluster::PowerSource::CLUSTER_ID.to_i64)
+    root_servers.should contain(Matter::Cluster::TlsCertificateManagement::CLUSTER_ID.to_i64)
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x0551_i64)
     read_camera_audio_int(device, 0xFFFD_u32).should eq(2_i64)
     read_camera_audio_int(device, 0xFFFC_u32).should eq(25_i64) # ADO + PRIV + SPKR
