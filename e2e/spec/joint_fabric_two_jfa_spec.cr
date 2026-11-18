@@ -3012,6 +3012,38 @@ describe "three provisioned Joint Fabric Administrators" do
         root_public_key: sdk_survivor.root_public_key)
       sleep 1.second
       read_two_jfa_on_off(anchor_im, sdk_anchor_session, sdk_recipient).should be_true
+      # UpdateGroup distributes the replacement key to every Anchor node.
+      # Retire this SDK-only fixture before the separate Crystal-target keyed
+      # revocation below, whose target permits three concurrent fabric keys.
+      sdk_remove_membership = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_REMOVE_GROUP_ID_FROM_ENDPOINT_FOR_NODE,
+        fields: JfaRolloutDatastore::RemoveGroupIDFromEndpointForNodeRequest.new(
+          SDK_MIGRATION_ANCHOR_NODE_ID, 1_u16, sdk_group_id).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_remove_membership)
+      sdk_remove_group = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_REMOVE_GROUP,
+        fields: JfaRolloutDatastore::RemoveGroupRequest.new(sdk_group_id).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_remove_group)
+      sdk_cleanup_deadline = Time.instant + 180.seconds
+      loop do
+        sdk_remaining_keys = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+        sdk_remaining_memberships = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointGroupIDEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+        break if sdk_remaining_keys.none?(&.group_key_set_id.==(sdk_new_key_set_id)) &&
+                 sdk_remaining_memberships.none?(&.group_id.==(sdk_group_id))
+        raise Matter::TimeoutError.new("SDK keyed fixture did not retire from Anchor nodes") if Time.instant >= sdk_cleanup_deadline
+        sleep 1.second
+      end
+      [sdk_old_key_set_id, sdk_new_key_set_id].each do |key_set_id|
+        sdk_remove_key = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+          endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+          command_id: JfaRolloutDatastore::CMD_REMOVE_KEY_SET,
+          fields: JfaRolloutDatastore::RemoveKeySetRequest.new(key_set_id).to_slice)
+        Matter::Controller::JointCommissioning.assert_status_success(sdk_remove_key)
+      end
       sdk_revoked_client.close
       sdk_survivor_client.close
     end

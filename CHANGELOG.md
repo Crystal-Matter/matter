@@ -11,7 +11,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Bound Datastore FriendlyName to the legacy Groups GroupName wire limit when
   delivering keyed membership, preserving the full Datastore name. Exercise
-  keyed group and CAT revocation against a migrated pinned SDK device.
+  keyed group and CAT revocation against a migrated pinned SDK device. Retire
+  rotated keys from nonmember nodes when their group is removed.
 
 ### Matter 1.6 Camera Controller device composition
 

@@ -1205,6 +1205,13 @@ module Matter
           entry
         end
         affected_nodes.each { |node_id| mark_unused_key_sets_for_node(node_id) }
+        # UpdateGroup distributes its replacement key to every NodeList node,
+        # including nonmembers. Retire that key everywhere once no group needs it.
+        if key_set_id = group.group_key_set_id
+          @node_key_set_list.select(&.group_key_set_id.==(key_set_id)).map(&.node_id).uniq!.each do |node_id|
+            mark_unused_key_sets_for_node(node_id, key_set_id)
+          end
+        end
         commit!
       end
 

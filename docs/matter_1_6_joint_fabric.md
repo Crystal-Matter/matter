@@ -124,6 +124,8 @@ blocked removal for operator reconciliation.
   allows 32. Delivery sends a UTF-8-safe 16-byte prefix for longer names and
   retains the full name in the Datastore. The SDK migrated-device E2E checks
   first keyed membership and key/CAT revocation after JCM.
+  RemoveGroup retires a rotated key set from every node that received it,
+  including nodes that never joined the group.
   RefreshNode rejects a target ProxyView ACL, which the Matter 1.6 Datastore
   privilege enum cannot represent, before changing local Datastore lists; the
   node remains Pending for an operator to resolve the incompatible ACL.
