@@ -81,7 +81,8 @@ def run(args):
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE" not in transcript or
                     "PASS: Crystal controller refreshed and renamed a live SDK JFA Datastore endpoint over CASE" not in transcript or
-                    "PASS: Crystal controller propagated and removed an SDK JFA Datastore group on a live switch" not in transcript or
+                    "PASS: SDK JFA delivered a group key set and membership to a live Crystal switch" not in transcript or
+                    "PASS: Crystal controller observed SDK JFA key-set delivery and removal on a live switch" not in transcript or
                     "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry" not in transcript or
                     "PASS: Crystal controller observed SDK JFA ACL add on a live switch and cleared the Datastore entry" not in transcript):
                 raise RuntimeError(
