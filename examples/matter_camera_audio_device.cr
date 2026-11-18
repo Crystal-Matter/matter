@@ -37,7 +37,7 @@ module MatterCameraAudio
     end
   end
 
-  class Device < Matter::Device
+  class BaseDevice < Matter::Device
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Camera Audio",
@@ -72,7 +72,9 @@ module MatterCameraAudio
       client_cluster Requestor::CLUSTER_ID
       client_cluster Chime::CLUSTER_ID
     end
+  end
 
+  class Device < BaseDevice
     protected def device_clusters : Array(Matter::Cluster::Base)
       clusters = super
       camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
