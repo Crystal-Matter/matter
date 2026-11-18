@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
-            libglib2.0-dev libssl-dev pkg-config clang ninja-build cmake iproute2
+            libglib2.0-dev libssl-dev libevent-dev pkg-config clang ninja-build cmake iproute2
           interface="$(ip -o -4 route show default | awk 'NR == 1 {print $5}')"
           test -n "${interface}"
           sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"

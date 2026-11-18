@@ -64,7 +64,10 @@ PY
     if [[ "${MATTER_INTEROP_SCENARIO:-switch}" != jcm ]]; then
       sdk_targets+=(--target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang)
     fi
-    ./scripts/build/build_examples.py "${sdk_targets[@]}" --build-profile debug \
+    # These Linux C++ targets do not need the SDK Java toolchain. Clearing
+    # JAVA_HOME skips its unrelated dependency download, which returns 403 on
+    # hosted runners before either interoperability scenario can start.
+    env -u JAVA_HOME ./scripts/build/build_examples.py "${sdk_targets[@]}" --build-profile debug \
       build --copy-artifacts-to objdir-jf
   ) 2>&1 | tee "${log_dir}/sdk-build.log"
 fi
