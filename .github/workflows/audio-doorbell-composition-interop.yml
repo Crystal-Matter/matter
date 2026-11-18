@@ -1,0 +1,29 @@
+name: Audio Doorbell composition interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/audio-doorbell-composition-interop.yml'
+      - 'e2e/spec/camera_audio_stream_spec.cr'
+      - 'examples/matter_camera_audio_device.cr'
+      - 'src/matter/device_type.cr'
+      - 'src/matter/camera_composition.cr'
+      - 'src/matter/node.cr'
+      - 'src/matter/device/runtime.cr'
+
+jobs:
+  official-chip-tool-audio-doorbell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify Audio Doorbell topology and ADO allocation with official chip-tool
+        run: ./test --focused --service camera-audio -- e2e/spec/camera_audio_stream_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-doorbell-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn
