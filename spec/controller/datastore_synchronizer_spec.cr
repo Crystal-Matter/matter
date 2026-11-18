@@ -58,6 +58,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   getter server_lists = Hash(UInt16, Array(UInt32)).new
   getter client_lists = Hash(UInt16, Array(UInt32)).new
   getter group_memberships = Hash(UInt16, Array(Matter::DataType::GroupId)).new
+  getter group_add_names = [] of String
   getter binding_entries = Hash(UInt16, Array(Matter::Cluster::Binding::Target)).new
   property key_set_ids = [] of UInt16
   property groupcast_memberships = [] of Matter::Cluster::Groupcast::MembershipStruct
@@ -97,10 +98,13 @@ private class DatastoreImClient < Matter::Controller::ImClient
     if cluster_id == Matter::Cluster::Groups::CLUSTER_ID
       if command_id == Matter::Cluster::Groups::CMD_ADD_GROUP
         request = Matter::Cluster::Groups::AddGroupRequest.from_slice(fields)
+        @group_add_names << request.group_name
         memberships = @group_memberships[endpoint_id]? || [] of Matter::DataType::GroupId
-        @group_memberships[endpoint_id] = (memberships + [request.group_id]).uniq
+        valid_name = request.group_name.bytesize <= Matter::Cluster::Groups::GROUP_NAME_MAX_LENGTH
+        @group_memberships[endpoint_id] = (memberships + [request.group_id]).uniq if valid_name
         response_id = Matter::Cluster::Groups::CMD_ADD_GROUP_RESPONSE
-        response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::AddGroupResponse.new(Matter::InteractionModel::StatusCode::Success, @group_response_id || request.group_id).to_slice)
+        code = valid_name ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::ConstraintError
+        response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::AddGroupResponse.new(code, @group_response_id || request.group_id).to_slice)
       elsif command_id == Matter::Cluster::Groups::CMD_REMOVE_GROUP
         request = Matter::Cluster::Groups::RemoveGroupRequest.from_slice(fields)
         if code = @response_code
@@ -1501,6 +1505,29 @@ describe Matter::Controller::DatastoreSynchronizer do
     mappings.first.fabric_index.should eq(im.current_fabric_index)
     im.commands.should eq([Matter::Cluster::Groups::CMD_ADD_GROUP])
     store.endpoint_group_id_list.first.status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "delivers a long Datastore FriendlyName to a legacy Groups recipient" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    full_name = "Dining room ☕X beyond"
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
+      2_u64, full_name, 1_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.node_key_set_list = [datastore_committed_node_key_set(0x100_u64, 1_u16)]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 2_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+
+    im.group_add_names.should eq(["Dining room ☕X"])
+    im.group_add_names.first.bytesize.should eq(Matter::Cluster::Groups::GROUP_NAME_MAX_LENGTH)
+    store.group_list.first.friendly_name.should eq(full_name)
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
   ensure
     client.try(&.close)
   end

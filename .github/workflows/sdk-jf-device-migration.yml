@@ -49,7 +49,11 @@ jobs:
           set +u
           source scripts/bootstrap.sh -p linux
           set -u
-          ./scripts/build/build_examples.py \
+          # The pinned host builder downloads Java test JARs whenever JAVA_HOME
+          # is set, even for this C++-only target. Hosted runners set it by
+          # default; omit it for this invocation to avoid an unrelated Maven
+          # dependency (and its intermittent HTTP 403).
+          env -u JAVA_HOME ./scripts/build/build_examples.py \
             --target linux-x64-all-clusters-ipv6only-no-ble-no-wifi-clang \
             --build-profile debug build --copy-artifacts-to objdir-jf
           install -Dm755 \
