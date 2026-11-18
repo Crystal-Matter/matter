@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   servers, mandatory Switch MomentarySwitch, and a Chime client. Verify the
   synthetic endpoint and InitialPress event with official chip-tool.
 
+### Matter 1.6 Joint Fabric keyed revocation on an official SDK device
+
+- Bound Datastore FriendlyName to the legacy Groups GroupName wire limit when
+  delivering keyed membership, preserving the full Datastore name. Exercise
+  keyed group and CAT revocation against a migrated pinned SDK device. Retire
+  rotated keys from nonmember nodes when their group is removed.
+
 ### Matter 1.6 Audio Doorbell device composition
 
 - Declare Audio Doorbell device type 0x0141 revision 2 with required server,
