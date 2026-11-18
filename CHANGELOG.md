@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 standalone Doorbell device composition
+
+- Declare Doorbell device type 0x0148 revision 2 with Identify and Switch
+  servers, mandatory Switch MomentarySwitch, and a Chime client. Verify the
+  synthetic endpoint and InitialPress event with official chip-tool.
+
 ### Matter 1.6 Audio Doorbell device composition
 
 - Declare Audio Doorbell device type 0x0141 revision 2 with required server,

@@ -4,9 +4,8 @@ require "./support/main"
 # Synthetic standalone Doorbell: emits one press after commissioning. Hosts
 # supply the physical button and choose how to contact a Chime client.
 module MatterDoorbell
-  DEVICE_ENDPOINT_ID      =      1_u16
-  DOORBELL_DEVICE_TYPE_ID = 0x0148_u32
-  EXAMPLE_PRODUCT_ID      = 0x0148_u16
+  DEVICE_ENDPOINT_ID =      1_u16
+  EXAMPLE_PRODUCT_ID = 0x0148_u16
 
   alias Switch = Matter::Cluster::Switch
   alias Chime = Matter::Cluster::Chime
@@ -25,7 +24,7 @@ module MatterDoorbell
 
     storage yaml: "matter_doorbell_storage.yml"
 
-    endpoint DEVICE_ENDPOINT_ID, device_type: DOORBELL_DEVICE_TYPE_ID do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::DOORBELL do
       cluster Matter::Cluster::Identify
       cluster Switch, feature_map: Switch::Feature::MomentarySwitch
       client_cluster Chime::CLUSTER_ID
