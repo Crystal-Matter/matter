@@ -595,9 +595,13 @@ module SdkJfaInverseDriver
           entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT &&
             entry.group_id == TEST_GROUP_ID
         end
-        break if !membership && !switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID)
+        remaining_node_key = node_key_set_list(im, session, peer).any? do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == ROTATED_KEY_SET_ID
+        end
+        break if !membership && !switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID) &&
+                 !remaining_node_key && !switch_key_set_ids(im, switch_session, switch_peer).includes?(ROTATED_KEY_SET_ID)
         if Time.instant >= removal_deadline
-          raise Matter::TimeoutError.new("SDK JFA did not remove the live switch group membership")
+          raise Matter::TimeoutError.new("SDK JFA did not remove the live switch group membership and key set")
         end
         sleep 1.second
       end
