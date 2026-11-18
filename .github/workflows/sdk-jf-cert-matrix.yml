@@ -61,7 +61,9 @@ jobs:
           set +u
           source scripts/bootstrap.sh -p linux
           set -u
-          ./scripts/build/build_examples.py \
+          # The C++ JFC target does not need Java JARs. The pinned host builder
+          # downloads them whenever JAVA_HOME is present on the runner.
+          env -u JAVA_HOME ./scripts/build/build_examples.py \
             --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
             --build-profile debug build --copy-artifacts-to objdir-jf
           ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
