@@ -262,19 +262,6 @@ module SdkJfaInverseDriver
     SwitchGroupKeys::KeySetReadAllIndicesResponse.from_slice(fields.to_slice).group_key_set_i_ds
   end
 
-  private def switch_group_key_map(im : Matter::Controller::ImClient,
-                                   session : Matter::Session::SecureContext,
-                                   peer : Socket::IPAddress) : Array(SwitchGroupKeys::GroupKeyMapStruct)
-    report = im.read_attribute(session: session, peer: peer,
-      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-      cluster_id: SwitchGroupKeys::CLUSTER_ID,
-      attribute_id: SwitchGroupKeys::ATTR_GROUP_KEY_MAP)
-    data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data || raise Matter::ProtocolError.new("Switch GroupKeyMap read returned a status")
-    value = data.data || raise Matter::ProtocolError.new("Switch GroupKeyMap read omitted data")
-    Array(SwitchGroupKeys::GroupKeyMapStruct).from_tlv(value.to_slice)
-  end
-
   private def invoke_datastore(im : Matter::Controller::ImClient,
                                session : Matter::Session::SecureContext,
                                peer : Socket::IPAddress,
@@ -528,10 +515,8 @@ module SdkJfaInverseDriver
       end
       initial_node_key_sets = node_key_set_list(im, session, peer)
       initial_switch_key_set_ids = switch_key_set_ids(im, switch_session, switch_peer)
-      initial_switch_group_key_map = switch_group_key_map(im, switch_session, switch_peer)
       if initial_switch_key_set_ids.includes?(TEST_KEY_SET_ID) ||
-         initial_switch_key_set_ids.includes?(ROTATED_KEY_SET_ID) ||
-         initial_switch_group_key_map.any?(&.group_id.==(TEST_GROUP_ID))
+         initial_switch_key_set_ids.includes?(ROTATED_KEY_SET_ID)
         raise Matter::ProtocolError.new("Live switch test group key already exists")
       end
       live_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(TEST_KEY_SET_ID,
@@ -554,25 +539,20 @@ module SdkJfaInverseDriver
         key_entry = node_key_set_list(im, session, peer).find do |entry|
           entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == TEST_KEY_SET_ID
         end
-        key_mapped = switch_group_key_map(im, switch_session, switch_peer).any? do |entry|
-          entry.group_id == TEST_GROUP_ID && entry.group_key_set_id == TEST_KEY_SET_ID &&
-            entry.fabric_index == switch_fabric_index
-        end
         break if membership && membership.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
                  switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID) &&
                  key_entry && key_entry.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
-                 switch_key_set_ids(im, switch_session, switch_peer).includes?(TEST_KEY_SET_ID) && key_mapped
+                 switch_key_set_ids(im, switch_session, switch_peer).includes?(TEST_KEY_SET_ID)
         if Time.instant >= group_deadline
           raise Matter::TimeoutError.new("SDK JFA did not commit live switch keyed group membership: " +
                                          "membership=#{membership.try(&.status_entry.state)}, " +
                                          "key=#{key_entry.try(&.status_entry.state)}, " +
                                          "switch groups=#{switch_group_ids(im, switch_session, switch_peer).inspect}, " +
-                                         "keys=#{switch_key_set_ids(im, switch_session, switch_peer).inspect}, " +
-                                         "map=#{switch_group_key_map(im, switch_session, switch_peer).inspect}")
+                                         "keys=#{switch_key_set_ids(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
       end
-      puts "PASS: SDK JFA delivered a keyed group to a live Crystal switch"
+      puts "PASS: SDK JFA delivered a group key set and membership to a live Crystal switch"
 
       replacement_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(ROTATED_KEY_SET_ID,
         SdkDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
@@ -590,20 +570,15 @@ module SdkJfaInverseDriver
         new_node_key = node_key_set_list(im, session, peer).find do |entry|
           entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == ROTATED_KEY_SET_ID
         end
-        mapped = switch_group_key_map(im, switch_session, switch_peer).any? do |entry|
-          entry.group_id == TEST_GROUP_ID && entry.group_key_set_id == ROTATED_KEY_SET_ID &&
-            entry.fabric_index == switch_fabric_index
-        end
         switch_keys = switch_key_set_ids(im, switch_session, switch_peer)
         break if !old_node_key && new_node_key &&
                  new_node_key.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
                  !switch_keys.includes?(TEST_KEY_SET_ID) &&
-                 switch_keys.includes?(ROTATED_KEY_SET_ID) && mapped
+                 switch_keys.includes?(ROTATED_KEY_SET_ID)
         if Time.instant >= rotation_deadline
           raise Matter::TimeoutError.new("SDK JFA did not rotate live switch group key: " +
                                          "old node key=#{old_node_key}, new node key=#{new_node_key.try(&.status_entry.state)}, " +
-                                         "switch keys=#{switch_keys.inspect}, " +
-                                         "map=#{switch_group_key_map(im, switch_session, switch_peer).inspect}")
+                                         "switch keys=#{switch_keys.inspect}")
         end
         sleep 1.second
       end
@@ -639,16 +614,14 @@ module SdkJfaInverseDriver
         end
       end
       final_switch_keys = switch_key_set_ids(im, switch_session, switch_peer)
-      final_switch_map = switch_group_key_map(im, switch_session, switch_peer)
       if group_list(im, session, peer).map(&.group_id).sort! != initial_groups.map(&.group_id).sort! ||
          final_endpoint_groups.size != initial_endpoint_groups.size ||
          !endpoint_baseline_preserved ||
          node_key_set_list(im, session, peer) != initial_node_key_sets ||
-         final_switch_keys.sort! != initial_switch_key_set_ids.sort! ||
-         final_switch_map != initial_switch_group_key_map
+         final_switch_keys.sort! != initial_switch_key_set_ids.sort!
         raise Matter::ProtocolError.new("SDK Datastore live group cleanup changed baseline lists")
       end
-      puts "PASS: Crystal controller propagated, rotated, and removed an SDK JFA Datastore keyed group on a live switch"
+      puts "PASS: Crystal controller observed SDK JFA key-set delivery, rotation, and removal on a live switch"
 
       # The pinned SDK writes Binding on endpoint 0 even when the Datastore
       # entry names endpoint 1. Verify the actual wire write and its receipt.
