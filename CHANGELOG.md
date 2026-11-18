@@ -10,7 +10,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Matter 1.6 Audio Doorbell device composition
 
 - Declare Audio Doorbell device type 0x0141 revision 2 with required server,
-  client, Switch and ADO-only roles plus Root Power Source/TLS certificates;
+  client, and ADO-only roles plus Root Power Source/TLS certificates;
   verify topology and logical audio allocation with official chip-tool.
 
 ### Matter 1.6 Camera Controller device composition

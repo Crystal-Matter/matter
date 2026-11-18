@@ -84,11 +84,12 @@ reuse of a pre-restart ID. SNP allocations are retained and require host callbac
 rebinding.
 
 The [synthetic audio example](../examples/matter_camera_audio_device.cr)
-advertises Audio Doorbell `0x0141` revision 2 with required Identify, Switch
-MomentarySwitch, Camera AV ADO, WebRTC Provider, Requestor client, Chime client,
-and Root Power Source/TLS Certificate Management roles. Official chip-tool
-checks the topology and logical ADO allocation; its Provider declines media
-signaling. The [synthetic video example](../examples/matter_camera_video_device.cr)
+advertises Audio Doorbell `0x0141` revision 2 with required Identify, Switch,
+Camera AV ADO, WebRTC Provider, Requestor client, Chime client, and Root Power
+Source/TLS Certificate Management roles. Official chip-tool checks the topology
+and logical ADO allocation; the fixture chooses a momentary Switch profile and
+its Provider declines media signaling. The
+[synthetic video example](../examples/matter_camera_video_device.cr)
 uses an Aggregator endpoint for wire checks. Their callbacks accept logical
 streams without producing media. Production devices need actual sensors,
 physical switch, encoders, transports, and hardware privacy integration before

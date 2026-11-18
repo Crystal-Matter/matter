@@ -56,7 +56,7 @@ private def audio_doorbell_endpoint(switch_feature : Matter::Cluster::Switch::Fe
 end
 
 describe "Matter 1.6 Audio Doorbell device composition" do
-  it "declares revision 2 with mandatory server, client, and Switch feature roles" do
+  it "declares revision 2 with mandatory server and client roles" do
     doorbell = Matter::DeviceType.for(AUDIO_DOORBELL_DEVICE_TYPE_ID)
 
     doorbell.name.should eq("Audio Doorbell")
@@ -67,15 +67,14 @@ describe "Matter 1.6 Audio Doorbell device composition" do
     doorbell.required_server_clusters.should contain(Provider::CLUSTER_ID)
     doorbell.required_client_clusters.should contain(Matter::Cluster::WebRtcTransportRequestor::CLUSTER_ID)
     doorbell.required_client_clusters.should contain(Matter::Cluster::Chime::CLUSTER_ID)
-    doorbell.required_server_features[Matter::Cluster::Switch::CLUSTER_ID].should eq(
-      Matter::Cluster::Switch::Feature::MomentarySwitch.value)
+    doorbell.required_server_features.has_key?(Matter::Cluster::Switch::CLUSTER_ID).should be_false
   end
 
-  it "requires the momentary Switch feature" do
+  it "accepts a latching Switch profile with all mandatory roles" do
     endpoint = audio_doorbell_endpoint(Matter::Cluster::Switch::Feature::LatchingSwitch,
       CameraAv::Feature::Audio)
 
-    endpoint.validate.join.should contain("Missing required feature")
+    endpoint.validate.should be_empty
   end
 
   it "rejects SNP-only AV and missing Root conditions" do

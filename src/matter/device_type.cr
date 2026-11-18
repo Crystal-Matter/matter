@@ -280,10 +280,7 @@ module Matter
           Cluster::WebRtcTransportRequestor::CLUSTER_ID,
           Cluster::Chime::CLUSTER_ID,
         ],
-        required_node_device_types: [ROOT_NODE, POWER_SOURCE],
-        required_server_features: {
-          Cluster::Switch::CLUSTER_ID => Cluster::Switch::Feature::MomentarySwitch.value,
-        }
+        required_node_device_types: [ROOT_NODE, POWER_SOURCE]
       )
     end
 
