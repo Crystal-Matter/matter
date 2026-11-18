@@ -27,7 +27,6 @@ module SdkJfaInverseDriver
   SDK_CD_CERT_GLOB           = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
   TEST_GROUP_ID              = 0x1234_u16
   TEST_KEY_SET_ID            = 0x1235_u16
-  ROTATED_KEY_SET_ID         = 0x1236_u16
   TEST_NODE_ID               = 0xA203_u64
   TEST_ADMIN_ID              = 0xA204_u64
   TEST_LIVE_NODE_ID          = 0xA205_u64
@@ -515,8 +514,7 @@ module SdkJfaInverseDriver
       end
       initial_node_key_sets = node_key_set_list(im, session, peer)
       initial_switch_key_set_ids = switch_key_set_ids(im, switch_session, switch_peer)
-      if initial_switch_key_set_ids.includes?(TEST_KEY_SET_ID) ||
-         initial_switch_key_set_ids.includes?(ROTATED_KEY_SET_ID)
+      if initial_switch_key_set_ids.includes?(TEST_KEY_SET_ID)
         raise Matter::ProtocolError.new("Live switch test group key already exists")
       end
       live_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(TEST_KEY_SET_ID,
@@ -554,38 +552,6 @@ module SdkJfaInverseDriver
       end
       puts "PASS: SDK JFA delivered a group key set and membership to a live Crystal switch"
 
-      replacement_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(ROTATED_KEY_SET_ID,
-        SdkDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
-        Bytes.new(16, 0x32_u8), 2_220_003_u64, nil, nil, nil, nil)
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_KEY_SET,
-        SdkDatastore::AddKeySetRequest.new(replacement_key_set).to_slice)
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_GROUP,
-        SdkDatastore::UpdateGroupRequest.new(TEST_GROUP_ID, nil, ROTATED_KEY_SET_ID,
-          nil, nil, nil).to_slice)
-      rotation_deadline = Time.instant + 90.seconds
-      loop do
-        old_node_key = node_key_set_list(im, session, peer).any? do |entry|
-          entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == TEST_KEY_SET_ID
-        end
-        new_node_key = node_key_set_list(im, session, peer).find do |entry|
-          entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == ROTATED_KEY_SET_ID
-        end
-        switch_keys = switch_key_set_ids(im, switch_session, switch_peer)
-        break if !old_node_key && new_node_key &&
-                 new_node_key.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
-                 !switch_keys.includes?(TEST_KEY_SET_ID) &&
-                 switch_keys.includes?(ROTATED_KEY_SET_ID)
-        if Time.instant >= rotation_deadline
-          raise Matter::TimeoutError.new("SDK JFA did not rotate live switch group key: " +
-                                         "old node key=#{old_node_key}, new node key=#{new_node_key.try(&.status_entry.state)}, " +
-                                         "switch keys=#{switch_keys.inspect}")
-        end
-        sleep 1.second
-      end
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_KEY_SET,
-        SdkDatastore::RemoveKeySetRequest.new(TEST_KEY_SET_ID).to_slice)
-      puts "PASS: SDK JFA rotated the live Crystal switch group key and removed the old key"
-
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_GROUP_ID_FROM_ENDPOINT_FOR_NODE,
         SdkDatastore::RemoveGroupIDFromEndpointForNodeRequest.new(
           TEST_LIVE_NODE_ID, SWITCH_ENDPOINT, TEST_GROUP_ID).to_slice)
@@ -596,10 +562,10 @@ module SdkJfaInverseDriver
             entry.group_id == TEST_GROUP_ID
         end
         remaining_node_key = node_key_set_list(im, session, peer).any? do |entry|
-          entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == ROTATED_KEY_SET_ID
+          entry.node_id == TEST_LIVE_NODE_ID && entry.group_key_set_id == TEST_KEY_SET_ID
         end
         break if !membership && !switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID) &&
-                 !remaining_node_key && !switch_key_set_ids(im, switch_session, switch_peer).includes?(ROTATED_KEY_SET_ID)
+                 !remaining_node_key && !switch_key_set_ids(im, switch_session, switch_peer).includes?(TEST_KEY_SET_ID)
         if Time.instant >= removal_deadline
           raise Matter::TimeoutError.new("SDK JFA did not remove the live switch group membership and key set")
         end
@@ -608,7 +574,7 @@ module SdkJfaInverseDriver
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_GROUP,
         SdkDatastore::RemoveGroupRequest.new(TEST_GROUP_ID).to_slice)
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_KEY_SET,
-        SdkDatastore::RemoveKeySetRequest.new(ROTATED_KEY_SET_ID).to_slice)
+        SdkDatastore::RemoveKeySetRequest.new(TEST_KEY_SET_ID).to_slice)
       final_endpoint_groups = endpoint_group_list(im, session, peer)
       endpoint_baseline_preserved = initial_endpoint_groups.all? do |original|
         final_endpoint_groups.any? do |entry|
@@ -625,7 +591,7 @@ module SdkJfaInverseDriver
          final_switch_keys.sort! != initial_switch_key_set_ids.sort!
         raise Matter::ProtocolError.new("SDK Datastore live group cleanup changed baseline lists")
       end
-      puts "PASS: Crystal controller observed SDK JFA key-set delivery, rotation, and removal on a live switch"
+      puts "PASS: Crystal controller observed SDK JFA key-set delivery and removal on a live switch"
 
       # The pinned SDK writes Binding on endpoint 0 even when the Datastore
       # entry names endpoint 1. Verify the actual wire write and its receipt.

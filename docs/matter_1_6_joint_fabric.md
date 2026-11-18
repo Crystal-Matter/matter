@@ -760,16 +760,20 @@ This covers endpoint discovery and naming against the SDK server. The same
 fixture then creates a Datastore group, adds and removes its membership on
 the live switch, and checks both the SDK EndpointGroupIDList state and the
 switch's Groups GetGroupMembership response over CASE.
-The inverse keyed-group lane additionally checks that the SDK JFA sends GKM
-KeySetWrite and KeySetRemove to that live switch when a Datastore group gains
-and rotates its GroupKeySetID. It observes committed NodeKeySetList entries and
+The inverse key-set lane additionally checks that the SDK JFA sends GKM
+KeySetWrite and KeySetRemove to that live switch when a keyed Datastore group
+gains and loses a live member. It observes committed NodeKeySetList entries and
 the switch's GKM KeySetReadAllIndices result, then restores the original key
-set list. The pinned SDK JFA delegate does not write the target's GroupKeyMap
-when it adds or rotates a Datastore group; it only reads that map during
-RefreshNode. Thus this lane establishes independent key-set delivery and
-retirement, not functional groupcast or full keyed-group interoperability.
-The missing map write remains an upstream SDK JFA gap under Core §11.24.4.5
-and GKM §11.2.6.4.
+set list. An independent fail-first UpdateGroup rotation reached the new key
+set on the switch but retained the old key in both the SDK NodeKeySetList and
+the switch GKM. The pinned SDK's RemoveNodeKeySetEntry sends a zero-initialized
+entry instead of a DeletePending entry with the old key ID, so the SDK delegate
+cannot issue the correct KeySetRemove. The pinned SDK JFA delegate also does
+not write the target's GroupKeyMap when it adds or rotates a Datastore group;
+it only reads that map during RefreshNode. Thus this lane establishes initial
+key-set delivery and retirement after membership removal, not functional
+groupcast or secure keyed-group rotation. Both upstream gaps remain under Core
+§11.24.4.5 and GKM §11.2.6.4.
 
 The binding extension sends typed
 AddBindingToEndpointForNode and RemoveBindingFromEndpointForNode, checks
