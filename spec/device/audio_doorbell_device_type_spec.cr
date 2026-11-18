@@ -30,6 +30,7 @@ end
 private def audio_doorbell_endpoint(switch_feature : Matter::Cluster::Switch::Feature,
                                     av_feature : CameraAv::Feature) : Matter::Endpoint
   endpoint = Matter::Endpoint.new(AUDIO_DOORBELL_ENDPOINT, Matter::DeviceType.for(AUDIO_DOORBELL_DEVICE_TYPE_ID))
+  endpoint.add_cluster(Matter::Cluster::Descriptor.new(AUDIO_DOORBELL_ENDPOINT))
   endpoint.add_cluster(Matter::Cluster::Identify.new(AUDIO_DOORBELL_ENDPOINT))
   endpoint.add_cluster(Matter::Cluster::Switch.new(AUDIO_DOORBELL_ENDPOINT, feature_map: switch_feature))
   av = CameraAv.new(AUDIO_DOORBELL_ENDPOINT,
