@@ -78,6 +78,7 @@ module Matter
     CONTENT_APP          = 0x0024_u32 # Content App
     CASTING_VIDEO_CLIENT = 0x0029_u32 # Casting Video Client
     VIDEO_REMOTE_CONTROL = 0x002A_u32 # Video Remote Control
+    AUDIO_DOORBELL       = 0x0141_u32 # Audio Doorbell (Matter 1.6)
     CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
     SNAPSHOT_CAMERA      = 0x0145_u32 # Snapshot Camera (Matter 1.6)
     CAMERA_CONTROLLER    = 0x0147_u32 # Camera Controller (Matter 1.6)
@@ -260,6 +261,26 @@ module Matter
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE],
         required_client_clusters: [Cluster::WebRtcTransportRequestor::CLUSTER_ID]
+      )
+    end
+
+    def self.audio_doorbell : DeviceType
+      new(
+        DataType::DeviceTypeId.new(AUDIO_DOORBELL),
+        "Audio Doorbell",
+        2_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Switch::CLUSTER_ID,
+          Cluster::CameraAvStreamManagement::CLUSTER_ID,
+          Cluster::WebRtcTransportProvider::CLUSTER_ID,
+        ],
+        required_client_clusters: [
+          Cluster::WebRtcTransportRequestor::CLUSTER_ID,
+          Cluster::Chime::CLUSTER_ID,
+        ],
+        required_node_device_types: [ROOT_NODE, POWER_SOURCE]
       )
     end
 
@@ -599,6 +620,7 @@ module Matter
       when FAN                            then fan
       when BASIC_VIDEO_PLAYER             then basic_video_player
       when CAMERA                         then camera
+      when AUDIO_DOORBELL                 then audio_doorbell
       when SNAPSHOT_CAMERA                then snapshot_camera
       when CAMERA_CONTROLLER              then camera_controller
       else
@@ -659,6 +681,7 @@ module Matter
       when FAN                            then "Fan"
       when BASIC_VIDEO_PLAYER             then "Basic Video Player"
       when CAMERA                         then "Camera"
+      when AUDIO_DOORBELL                 then "Audio Doorbell"
       when SNAPSHOT_CAMERA                then "Snapshot Camera"
       when CAMERA_CONTROLLER              then "Camera Controller"
       when CASTING_VIDEO_PLAYER           then "Casting Video Player"
