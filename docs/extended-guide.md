@@ -443,6 +443,11 @@ Configure one or more uniquely named sounds and register `on_play` to start
 physical playback. Controllers can write `SelectedChime` and `Enabled`; both
 survive restart. A successful playback request emits `ChimeStartedPlaying`.
 See `examples/matter_chime_device.cr` for a synthetic Chime server.
+That example advertises the Chime device type `0x0146` revision 1, whose only
+mandatory application server is Chime; Identify is optional. The device type
+revision is independent of the Chime cluster's revision 2. Official chip-tool
+reads the device topology, selects a sound, invokes playback, and reads the
+started event. Actual audio playback remains a host responsibility.
 
 The standalone Matter 1.6 Doorbell device type `0x0148` revision 2 requires
 Identify and Switch servers, the Switch MomentarySwitch feature, and a Chime

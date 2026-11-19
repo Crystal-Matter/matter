@@ -24,7 +24,7 @@ module MatterChime
 
     storage yaml: "matter_chime_storage.yml"
 
-    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::CHIME do
       cluster Chime,
         sounds: SOUNDS,
         selected_chime: SOUNDS.first.chime_id

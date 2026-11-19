@@ -1,7 +1,8 @@
 require "./e2e_helper"
 
-private CHIME_CLUSTER  = "0x556"
-private CHIME_ENDPOINT = "1"
+private CHIME_CLUSTER        = "0x556"
+private CHIME_ENDPOINT       = "1"
+private CHIME_DEVICE_TYPE_ID = 0x0146_u32
 
 private def read_chime(device : E2E::Device, attribute : UInt32) : Int64
   result = expect_success(device.chip("any", "read-by-id", CHIME_CLUSTER,
@@ -15,6 +16,11 @@ describe "Matter 1.6 Chime interoperability" do
 
   it "commissions and reads the installed sounds and revision two" do
     device.commission!
+    device_type = expect_success(device.read("descriptor", "device-type-list"))
+    device_type.int("DeviceType").should eq(CHIME_DEVICE_TYPE_ID.to_i64)
+    device_type.int("Revision").should eq(1_i64)
+    servers = expect_success(device.read("descriptor", "server-list")).int_list("ServerList")
+    servers.should contain(Matter::Cluster::Chime::CLUSTER_ID.to_i64)
     read_chime(device, 0xFFFD_u32).should eq(2_i64)
     read_chime(device, 0x0001_u32).should eq(1_i64)
     expect_success(device.read("chime", "installed-chime-sounds")).output.should contain("Classic")
