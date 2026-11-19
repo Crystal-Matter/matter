@@ -11,7 +11,7 @@ describe "GroupKeyManagement fabric-scoped wire commands" do
     GKM::CMD_KEY_SET_READ_ALL_INDICES => nil,
   } of UInt32 => TLV::Any?
 
-  [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |invalid_fabric|
+  [nil, Matter::DataType::NO_FABRIC, UInt8::MAX].each do |invalid_fabric|
     commands.each do |command_id, fields|
       it "rejects command #{command_id} for reserved fabric #{invalid_fabric} before callbacks or state changes" do
         cluster = build(GKM, 0)

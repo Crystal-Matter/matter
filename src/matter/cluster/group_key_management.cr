@@ -1,4 +1,5 @@
 require "./cluster"
+require "../fabric"
 require "log"
 
 module Matter
@@ -392,6 +393,17 @@ module Matter
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @key_sets = Hash(UInt8, Hash(UInt16, GroupKeySetStruct)).new
+      end
+
+      # All KeySet wire commands are fabric-scoped. Check the accessing index
+      # before Base invokes command hooks or any handler touches key material.
+      def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
+                         is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        if get_command_metadata(command_id)
+          return InteractionModel::Status.unsupported_access unless fabric_index &&
+                                                                    Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
+        end
+        super
       end
 
       # Replaces the accessing fabric's GroupKeyMap entries.
