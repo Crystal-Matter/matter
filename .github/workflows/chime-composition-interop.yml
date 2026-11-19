@@ -1,0 +1,26 @@
+name: Chime composition interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/chime-composition-interop.yml'
+      - 'e2e/spec/chime_spec.cr'
+      - 'examples/matter_chime_device.cr'
+      - 'src/matter/device_type.cr'
+
+jobs:
+  official-chip-tool-chime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify Chime device topology and playback event with official chip-tool
+        run: ./test --focused --service chime -- e2e/spec/chime_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chime-composition-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn
