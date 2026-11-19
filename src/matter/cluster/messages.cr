@@ -1,4 +1,5 @@
 require "./cluster"
+require "../fabric"
 
 module Matter
   module Cluster
@@ -280,6 +281,17 @@ module Matter
       @queue_generation = {} of String => UInt64
       @next_queue_generation = 0_u64
       @expiry_generation = 0_u64
+
+      # Both wire commands are fabric-scoped. Reject invalid CASE fabric
+      # context before Base runs command hooks or dispatches the request.
+      def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
+                         is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        if get_command_metadata(command_id)
+          return InteractionModel::Status.unsupported_access unless is_case_session && fabric_index &&
+                                                                    Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
+        end
+        super
+      end
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::None,
@@ -580,7 +592,9 @@ module Matter
 
       private def validate_message!(message : Message) : Nil
         validate_message_id!(message.message_id)
-        raise ArgumentError.new("fabric index must be nonzero") if message.fabric_index == DataType::NO_FABRIC
+        unless (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(message.fabric_index)
+          raise ArgumentError.new("fabric index must be valid")
+        end
         validate_fields!(message.control, message.text, message.responses)
       end
 
