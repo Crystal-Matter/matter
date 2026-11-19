@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Messages fabric index validation
+
+- Reject PresentMessagesRequest and CancelMessagesRequest before command hooks
+  when their CASE fabric index is outside the Matter range. Reject persisted
+  messages with a reserved fabric index during restore.
+
 ### Matter 1.6 Chime device composition
 
 - Declare Chime device type 0x0146 revision 1 with required Chime server and
