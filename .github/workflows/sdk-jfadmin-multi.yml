@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             avahi-daemon avahi-utils dbus iproute2 libavahi-client-dev libdbus-1-dev \
-            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev \
+            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev libevent-dev \
             pkg-config clang ninja-build cmake
           interface=$(ip -o -4 route show default | awk '{print $5; exit}')
           sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
@@ -103,15 +103,15 @@ jobs:
           set +u
           source scripts/bootstrap.sh -p linux
           set -u
-          ./scripts/build/build_examples.py \
+          env -u JAVA_HOME ./scripts/build/build_examples.py \
             --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
             --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
             --target linux-x64-all-clusters-ipv6only-no-ble-no-wifi-clang \
             --build-profile debug build --copy-artifacts-to objdir-jf
-          ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
+          env -u JAVA_HOME ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
             --include_pytest_deps no --install_virtual_env out/python_env
           out/python_env/bin/pip install -r src/python_testing/requirements.txt
-          gn gen out/host
+          env -u JAVA_HOME gn gen out/host
           ninja -C out/host chip-cert
           out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run unmodified TC_JFADMIN_2_2 against Crystal joining JFA
