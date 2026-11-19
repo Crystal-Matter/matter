@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Messages fabric index validation
+
+- Reject PresentMessagesRequest and CancelMessagesRequest before command hooks
+  when their CASE fabric index is outside the Matter range. Reject persisted
+  messages with a reserved fabric index during restore.
+
 ### Matter 1.6 Joint Fabric SDK migration verification restart
 
 - Restart the joining Administrator after it durably verifies the independent
