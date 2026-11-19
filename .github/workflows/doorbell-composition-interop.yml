@@ -1,0 +1,27 @@
+name: Doorbell composition interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/doorbell-composition-interop.yml'
+      - 'e2e/spec/doorbell_composition_spec.cr'
+      - 'examples/matter_doorbell_device.cr'
+      - 'docker-compose.yml'
+      - 'src/matter/device_type.cr'
+
+jobs:
+  official-chip-tool-doorbell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify standalone Doorbell roles and InitialPress with official chip-tool
+        run: ./test --focused --service doorbell -- e2e/spec/doorbell_composition_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doorbell-composition-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn

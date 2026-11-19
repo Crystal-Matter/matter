@@ -442,7 +442,15 @@ units, and the current composite endpoint limitation.
 Configure one or more uniquely named sounds and register `on_play` to start
 physical playback. Controllers can write `SelectedChime` and `Enabled`; both
 survive restart. A successful playback request emits `ChimeStartedPlaying`.
-See `examples/matter_chime_device.cr` for a synthetic doorbell.
+See `examples/matter_chime_device.cr` for a synthetic Chime server.
+
+The standalone Matter 1.6 Doorbell device type `0x0148` revision 2 requires
+Identify and Switch servers, the Switch MomentarySwitch feature, and a Chime
+client. Its required profile is distinct from Audio Doorbell `0x0141`, whose
+Switch server does not require MomentarySwitch. See
+`examples/matter_doorbell_device.cr` for a synthetic endpoint and host-originated
+InitialPress event. A physical button and Chime playback routing belong to the
+host application.
 
 `Cluster::CameraAvSettingsUserLevelManagement` implements Matter 1.6 mechanical
 pan, tilt, and zoom features in configurable combinations. MPAN-only hosts can
