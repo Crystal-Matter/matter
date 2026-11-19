@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group Key Management command fabric scope
+
+- Reject all four KeySet wire commands when the accessing fabric index is
+  missing or reserved, before command hooks or key-set callbacks run.
+
 ### Messages fabric index validation
 
 - Reject PresentMessagesRequest and CancelMessagesRequest before command hooks
