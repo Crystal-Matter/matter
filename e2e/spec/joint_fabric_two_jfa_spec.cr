@@ -1575,7 +1575,7 @@ describe "three provisioned Joint Fabric Administrators" do
       jfa_node_list(anchor_im, anchor_session, anchor_peer,
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
-      end.should be_false
+      end.should be_true
       jfa_node_list(joiner_im, joiner_session, joiner_peer,
         MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?

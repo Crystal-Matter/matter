@@ -10,8 +10,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Matter 1.6 Joint Fabric SDK migration verification restart
 
 - Restart the joining Administrator after it durably verifies the independent
-  SDK device over Anchor CASE but before Anchor NodeList registration. Verify
-  both fabric sessions, unchanged NodeLists, and safe migration continuation.
+  SDK device over Anchor CASE but before final Anchor NodeList confirmation.
+  Verify both fabric sessions, both NodeList entries, and safe continuation.
 
 ### Matter 1.6 standalone Doorbell device composition
 
