@@ -1008,8 +1008,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    with independent ecosystem devices before claiming conformance. The SDK
    all-clusters migration verifies the successful independent device path;
    most interruption coverage still uses a Crystal target; the SDK device now
-   covers the post-CommissioningComplete acknowledgement gap, pre-RemoveFabric
-   no-effect, and post-RemoveFabric recovery through live B restarts.
+   covers the post-CommissioningComplete acknowledgement gap, an AnchorVerified
+   restart before final Anchor NodeList confirmation, pre-RemoveFabric no-effect, and
+   post-RemoveFabric recovery through live B restarts.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected

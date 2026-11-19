@@ -314,6 +314,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
       getter? interrupt_before_migration_anchor_verified : Bool = false
+      getter? interrupt_after_migration_anchor_verified : Bool = false
       getter? interrupt_before_migration_old_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_fabric_removed : Bool = false
       getter? interrupt_before_migration_old_node_removed : Bool = false
@@ -373,6 +374,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_fabric_removed : Bool = false,
                      @interrupt_before_migration_anchor_verified : Bool = false,
+                     @interrupt_after_migration_anchor_verified : Bool = false,
                      @interrupt_before_migration_old_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_fabric_removed : Bool = false,
                      @interrupt_before_migration_old_node_removed : Bool = false,
@@ -4238,6 +4240,9 @@ module MatterJointFabricAdministrator
             journal_store.save(entry)
             if request.interrupt_before_migration_anchor_verified? && entry.stage.verifying_anchor?
               raise Matter::TransportError.new("Injected interruption before Anchor verification")
+            end
+            if request.interrupt_after_migration_anchor_verified? && entry.stage.anchor_verified?
+              raise Matter::TransportError.new("Injected interruption after Anchor verification")
             end
             if request.interrupt_before_migration_old_fabric_removed? && entry.stage.removing_old_fabric?
               raise Matter::TransportError.new("Injected interruption before device RemoveFabric")

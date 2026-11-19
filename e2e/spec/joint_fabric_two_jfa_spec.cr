@@ -1552,6 +1552,40 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_reconciled_anchor_stage.inspected_migration_stage.should eq(
         Matter::Controller::JointFabricDeviceMigration::Stage::AnchorCommissioned.value)
       File.read("#{sdk_reply_loss_path}.sent").should eq("1")
+      sdk_interrupted_after_verification = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_anchor_verified: true))
+      sdk_interrupted_after_verification.status.should eq("error")
+      sdk_interrupted_after_verification.error.to_s.should contain("Injected interruption after Anchor verification")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_verified_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_verified_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::AnchorVerified.value)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
+      end.should be_true
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_peer, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        sdk_peer, joiner_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
       sdk_interrupted_registration = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,

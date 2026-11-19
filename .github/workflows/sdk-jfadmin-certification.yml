@@ -39,7 +39,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
-            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev \
+            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev libevent-dev \
             pkg-config clang ninja-build cmake
           pkg-config --modversion gobject-introspection-1.0
           sudo service dbus start
