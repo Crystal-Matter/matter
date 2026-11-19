@@ -86,6 +86,86 @@ private def present_message(id : Bytes, text : String = "Hello") : Messages::Pre
 end
 
 describe Messages do
+  it "rejects PresentMessagesRequest on invalid CASE fabric indexes before any callback or state change" do
+    host = MessagePresentationHost.new
+    cluster = build(Messages, host: host)
+    callbacks = 0
+    cluster.on_before_command = ->(_command : UInt32) { callbacks += 1; nil }
+    cluster.on_version_changed = -> { callbacks += 1; nil }
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, _event : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      callbacks += 1
+      nil
+    end
+    before_state = cluster.save_state
+    before_version = cluster.data_version
+
+    [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric_index|
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST,
+        present_message(message_id(fabric_index)), is_case_session: true, fabric_index: fabric_index), MessageStatus::UnsupportedAccess)
+    end
+
+    cluster.save_state.should eq(before_state)
+    cluster.data_version.should eq(before_version)
+    cluster.active_message_ids.should be_empty
+    host.queued.should be_empty
+    host.cancelled.should be_empty
+    callbacks.should eq(0)
+  end
+
+  it "rejects CancelMessagesRequest on invalid CASE fabric indexes before any callback or state change" do
+    host = MessagePresentationHost.new
+    cluster = build(Messages, host: host)
+    id = message_id(7_u8)
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST,
+      present_message(id), is_case_session: true, fabric_index: Matter::Fabric::MIN_FABRIC_INDEX), MessageStatus::Success)
+    callbacks = 0
+    cluster.on_before_command = ->(_command : UInt32) { callbacks += 1; nil }
+    cluster.on_version_changed = -> { callbacks += 1; nil }
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, _event : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      callbacks += 1
+      nil
+    end
+    before_state = cluster.save_state
+    before_version = cluster.data_version
+
+    [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric_index|
+      expect_status(invoke(cluster, Messages::CMD_CANCEL_MESSAGES_REQUEST,
+        Messages::CancelRequest.new([id]), is_case_session: true, fabric_index: fabric_index), MessageStatus::UnsupportedAccess)
+    end
+
+    cluster.save_state.should eq(before_state)
+    cluster.data_version.should eq(before_version)
+    cluster.messages(Matter::Fabric::MIN_FABRIC_INDEX).as(Array(Messages::Message)).map(&.message_id).should eq([id])
+    host.queued.size.should eq(1)
+    host.cancelled.should be_empty
+    callbacks.should eq(0)
+  end
+
+  it "accepts both endpoint fabric indexes for CASE message commands" do
+    host = MessagePresentationHost.new
+    cluster = build(Messages, host: host)
+    [Matter::Fabric::MIN_FABRIC_INDEX, Matter::Fabric::MAX_FABRIC_INDEX].each do |fabric_index|
+      id = message_id(fabric_index)
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST,
+        present_message(id), is_case_session: true, fabric_index: fabric_index), MessageStatus::Success)
+      cluster.messages(fabric_index).as(Array(Messages::Message)).map(&.message_id).should eq([id])
+      expect_status(invoke(cluster, Messages::CMD_CANCEL_MESSAGES_REQUEST,
+        Messages::CancelRequest.new([id]), is_case_session: true, fabric_index: fabric_index), MessageStatus::Success)
+      cluster.messages(fabric_index).as(Array(Messages::Message)).should be_empty
+    end
+    host.queued.map(&.[1]).should eq([Matter::Fabric::MIN_FABRIC_INDEX, Matter::Fabric::MAX_FABRIC_INDEX])
+    host.cancelled.map(&.[1]).should eq([Matter::Fabric::MIN_FABRIC_INDEX, Matter::Fabric::MAX_FABRIC_INDEX])
+  end
+
+  it "rejects persisted messages with reserved fabric indexes" do
+    [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric_index|
+      request = present_message(message_id(fabric_index))
+      message = Messages::Message.new(request, fabric_index)
+      state = Messages::PersistedState.new(0_u32, [message], [] of Bytes)
+      expect_raises(ArgumentError) { build(Messages).restore_state(state.to_document) }
+    end
+  end
+
   it "requires per-message and per-fabric host authentication before protected presentation" do
     host = ProtectedMessageHost.new
     cluster = build(Messages, feature_map: Messages::Feature::ProtectedMessages, host: host)
