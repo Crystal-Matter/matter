@@ -82,6 +82,7 @@ module Matter
     CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
     SNAPSHOT_CAMERA      = 0x0145_u32 # Snapshot Camera (Matter 1.6)
     CAMERA_CONTROLLER    = 0x0147_u32 # Camera Controller (Matter 1.6)
+    DOORBELL             = 0x0148_u32 # Doorbell (Matter 1.6)
 
     getter device_type_id : DataType::DeviceTypeId
     getter name : String
@@ -281,6 +282,23 @@ module Matter
           Cluster::Chime::CLUSTER_ID,
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE]
+      )
+    end
+
+    def self.doorbell : DeviceType
+      new(
+        DataType::DeviceTypeId.new(DOORBELL),
+        "Doorbell",
+        2_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Switch::CLUSTER_ID,
+        ],
+        required_client_clusters: [Cluster::Chime::CLUSTER_ID],
+        required_server_features: {
+          Cluster::Switch::CLUSTER_ID => Cluster::Switch::Feature::MomentarySwitch.value,
+        }
       )
     end
 
@@ -621,6 +639,7 @@ module Matter
       when BASIC_VIDEO_PLAYER             then basic_video_player
       when CAMERA                         then camera
       when AUDIO_DOORBELL                 then audio_doorbell
+      when DOORBELL                       then doorbell
       when SNAPSHOT_CAMERA                then snapshot_camera
       when CAMERA_CONTROLLER              then camera_controller
       else
@@ -682,6 +701,7 @@ module Matter
       when BASIC_VIDEO_PLAYER             then "Basic Video Player"
       when CAMERA                         then "Camera"
       when AUDIO_DOORBELL                 then "Audio Doorbell"
+      when DOORBELL                       then "Doorbell"
       when SNAPSHOT_CAMERA                then "Snapshot Camera"
       when CAMERA_CONTROLLER              then "Camera Controller"
       when CASTING_VIDEO_PLAYER           then "Casting Video Player"
