@@ -314,6 +314,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
       getter? interrupt_before_migration_anchor_verified : Bool = false
+      getter? interrupt_after_migration_anchor_verified : Bool = false
       getter? interrupt_before_migration_old_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_fabric_removed : Bool = false
       getter? interrupt_before_migration_old_node_removed : Bool = false
@@ -373,6 +374,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_fabric_removed : Bool = false,
                      @interrupt_before_migration_anchor_verified : Bool = false,
+                     @interrupt_after_migration_anchor_verified : Bool = false,
                      @interrupt_before_migration_old_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_fabric_removed : Bool = false,
                      @interrupt_before_migration_old_node_removed : Bool = false,
