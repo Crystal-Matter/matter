@@ -149,7 +149,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO/VDO signaling with host Peer interface; independent Matter.js/Chrome E2E decodes synthetic H.264 video and Opus audio over ICE/DTLS/SRTP and checks End and software privacy teardown; production media and official SDK Camera Controller interop remain |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
-| 0x0556 | Chime Cluster | 2 | 2 | — | Standalone Doorbell 0x0148 revision 2 client role and Switch MS topology verified with chip-tool; host playback/routing remains |
+| 0x0556 | Chime Cluster | 2 | 2 | — | Chime device type 0x0146 revision 1 server and standalone Doorbell 0x0148 revision 2 client topology verified with chip-tool; host playback/routing remains |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | Pricing calendar, standalone FCRED and AUXLD calendars, and opt-in FCRED, PEAKP, AUXLD, PWRTHLD, and RNDM transitions |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |

@@ -81,6 +81,7 @@ module Matter
     AUDIO_DOORBELL       = 0x0141_u32 # Audio Doorbell (Matter 1.6)
     CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
     SNAPSHOT_CAMERA      = 0x0145_u32 # Snapshot Camera (Matter 1.6)
+    CHIME                = 0x0146_u32 # Chime (Matter 1.6)
     CAMERA_CONTROLLER    = 0x0147_u32 # Camera Controller (Matter 1.6)
     DOORBELL             = 0x0148_u32 # Doorbell (Matter 1.6)
 
@@ -318,6 +319,19 @@ module Matter
           Cluster::CameraAvSettingsUserLevelManagement::CLUSTER_ID,
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE]
+      )
+    end
+
+    def self.chime : DeviceType
+      new(
+        DataType::DeviceTypeId.new(CHIME),
+        "Chime",
+        1_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Chime::CLUSTER_ID,
+        ],
+        optional_server_clusters: [Cluster::Identify::CLUSTER_ID]
       )
     end
 
@@ -641,6 +655,7 @@ module Matter
       when AUDIO_DOORBELL                 then audio_doorbell
       when DOORBELL                       then doorbell
       when SNAPSHOT_CAMERA                then snapshot_camera
+      when CHIME                          then chime
       when CAMERA_CONTROLLER              then camera_controller
       else
         new(
@@ -703,6 +718,7 @@ module Matter
       when AUDIO_DOORBELL                 then "Audio Doorbell"
       when DOORBELL                       then "Doorbell"
       when SNAPSHOT_CAMERA                then "Snapshot Camera"
+      when CHIME                          then "Chime"
       when CAMERA_CONTROLLER              then "Camera Controller"
       when CASTING_VIDEO_PLAYER           then "Casting Video Player"
       when SPEAKER                        then "Speaker"
