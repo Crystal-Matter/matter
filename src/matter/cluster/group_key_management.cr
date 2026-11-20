@@ -407,10 +407,20 @@ module Matter
       end
 
       def write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
-        if attribute_id == ATTR_GROUP_KEY_MAP && !valid_accessing_fabric?(request_fabric_index)
-          return InteractionModel::Status.unsupported_access
+        if attribute_id == ATTR_GROUP_KEY_MAP
+          fabric_index = request_fabric_index
+          return InteractionModel::Status.unsupported_access unless valid_accessing_fabric?(fabric_index)
+          if list = value.as_list?
+            foreign_index = list.any? do |item|
+              supplied_index = GroupKeyMapWriteStruct.from_tlv(item).fabric_index
+              supplied_index && supplied_index != fabric_index
+            end
+            return InteractionModel::Status.unsupported_access if foreign_index
+          end
         end
         super
+      rescue TLV::DeserializationError | TypeCastError | ArgumentError
+        InteractionModel::Status.invalid_data_type
       end
 
       private def valid_accessing_fabric?(fabric_index : UInt8?) : Bool
