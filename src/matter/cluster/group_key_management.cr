@@ -215,8 +215,8 @@ module Matter
         end
       end
 
-      # Incoming fabric-scoped entries omit FabricIndex; the authenticated
-      # accessing fabric supplies it. Stored/read entries use GroupKeyMapStruct.
+      # Incoming fabric-scoped entries may omit FabricIndex; the accessing
+      # fabric supplies it. An explicitly supplied index must match.
       private struct GroupKeyMapWriteStruct
         include TLV::Serializable
 
@@ -348,7 +348,7 @@ module Matter
 
       # A GroupKeyMap write needs a fabric and stays within its limits (Matter Core §11.2.7.1).
       before_write :group_key_map do |entries|
-        if request_fabric_index.nil?
+        if !valid_accessing_fabric?(request_fabric_index)
           InteractionModel::Status.unsupported_access
         elsif entries.any? { |entry| entry.group_id == RESERVED_GROUP_ID || entry.group_key_set_id == IPK_KEY_SET_ID }
           InteractionModel::Status.constraint_error
@@ -404,6 +404,18 @@ module Matter
                                                                     Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
         end
         super
+      end
+
+      def write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
+        if attribute_id == ATTR_GROUP_KEY_MAP && !valid_accessing_fabric?(request_fabric_index)
+          return InteractionModel::Status.unsupported_access
+        end
+        super
+      end
+
+      private def valid_accessing_fabric?(fabric_index : UInt8?) : Bool
+        return false unless fabric_index
+        (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric_index)
       end
 
       # Replaces the accessing fabric's GroupKeyMap entries.
@@ -788,21 +800,23 @@ module Matter
       end
 
       # Handles a complete list replacement or chip-tool's empty-list clear
-      # followed by list-item appends. FabricIndex on the wire is ignored.
+      # followed by list-item appends. An explicit FabricIndex must match.
       def write_group_key_map(value : TLV::Any, fabric_index : UInt8) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_access unless valid_accessing_fabric?(fabric_index)
         protocol_lock = @protocol_lock
         protocol_lock.try(&.lock)
-        @on_before_direct_mutation.try(&.call)
         return InteractionModel::Status.invalid_in_state if groupcast_adopted?(fabric_index)
         if list = value.as_list?
           return InteractionModel::Status.resource_exhausted if list.size > max_groups_per_fabric
           entries = list.map { |item| GroupKeyMapWriteStruct.from_tlv(item) }
+          return InteractionModel::Status.unsupported_access if entries.any? { |entry| entry.fabric_index && entry.fabric_index != fabric_index }
           return InteractionModel::Status.constraint_error if entries.any? { |entry| entry.group_id == RESERVED_GROUP_ID || entry.group_key_set_id == IPK_KEY_SET_ID }
           return InteractionModel::Status.constraint_error if entries.map(&.group_id).to_set.size != entries.size
           return InteractionModel::Status.not_found if entries.any? { |entry| !get_key_set(entry.group_key_set_id, fabric_index) }
           self.group_key_map = entries.map { |entry| GroupKeyMapStruct.new(entry.group_id, entry.group_key_set_id, fabric_index) }
         elsif value.as_structure?
           entry = GroupKeyMapWriteStruct.from_tlv(value)
+          return InteractionModel::Status.unsupported_access if entry.fabric_index && entry.fabric_index != fabric_index
           return InteractionModel::Status.constraint_error if entry.group_key_set_id == IPK_KEY_SET_ID
           add_group_key_map(entry.group_id, entry.group_key_set_id, fabric_index)
         else

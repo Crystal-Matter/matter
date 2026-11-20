@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group Key Management map write fabric validation
+
+- Reject GroupKeyMap writes for reserved accessing fabric indexes before
+  callbacks or state changes. A supplied FabricIndex must match the accessing
+  fabric; the chip-tool form that omits it remains accepted.
+
 ### Group Key Management command fabric scope
 
 - Reject all four KeySet wire commands unless a CASE session supplies a valid
