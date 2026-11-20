@@ -408,6 +408,9 @@ module Matter
 
       def write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
         if attribute_id == ATTR_GROUP_KEY_MAP
+          unless request_is_case_session? || request_auth_mode == InteractionModel::EntryAuthMode::Group
+            return InteractionModel::Status.unsupported_access
+          end
           fabric_index = request_fabric_index
           return InteractionModel::Status.unsupported_access unless valid_accessing_fabric?(fabric_index)
           if list = value.as_list?
