@@ -29,6 +29,18 @@ describe "Camera AV Image Control rotation" do
       ImageControlCamera::ATTR_IMAGE_ROTATION), ImageControlCode::UnsupportedAttribute)
   end
 
+  it "requires Video or Snapshot when Image Control is advertised" do
+    microphone = ImageControlCamera::AudioCapabilities.new(1_u8,
+      [ImageControlCamera::AudioCodec::Opus], [48_000_u32], [16_u8])
+    expect_raises(ArgumentError, "Image Control requires Snapshot or Video") do
+      build(ImageControlCamera,
+        supported_stream_usages: [ImageControlCamera::StreamUsage::LiveView],
+        max_content_buffer_size: 1024_u32, max_network_bandwidth: 100_000_u32,
+        microphone_capabilities: microphone,
+        feature_map: ImageControlCamera::Feature::Audio | ImageControlCamera::Feature::ImageControl)
+    end
+  end
+
   it "admits orientation before committing, validates bounds, and restores state" do
     camera = image_control_camera
     expect_status(write(camera, ImageControlCamera::ATTR_IMAGE_ROTATION, 90_u16),

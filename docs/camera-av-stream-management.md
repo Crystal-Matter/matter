@@ -35,7 +35,7 @@ and apply changes through `on_video_modify` before the library commits them.
 The host renders overlays into video frames; the library tracks stream settings.
 VDO without those features does not enable overlay or snapshot commands.
 
-The optional Image Control (`ICTL`) profile exposes a Manage-privileged,
+The optional Image Control (`ICTL`) profile requires VDO or SNP and exposes a Manage-privileged,
 nonvolatile `ImageRotation` setting from 0 through 359 degrees. Attach
 `on_image_rotation_changed` after restoring the cluster; it receives the
 restored value and must accept each controller write before the new angle is

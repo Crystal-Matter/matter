@@ -827,6 +827,9 @@ module Matter
         if (@feature_map.watermark? || @feature_map.osd?) && !(@feature_map.snapshot? || @feature_map.video?)
           raise ArgumentError.new("Watermark and OSD require Snapshot or Video")
         end
+        if @feature_map.image_control? && !(@feature_map.snapshot? || @feature_map.video?)
+          raise ArgumentError.new("Image Control requires Snapshot or Video")
+        end
         raise ArgumentError.new("Audio feature requires microphone capabilities") if @feature_map.audio? && !@microphone_capabilities
         if @feature_map.snapshot?
           raise ArgumentError.new("Snapshot feature requires capabilities") if snapshot_capabilities.empty?
