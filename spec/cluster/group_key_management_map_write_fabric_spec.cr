@@ -67,6 +67,24 @@ describe "GroupKeyManagement fabric-scoped GroupKeyMap writes" do
     end
   end
 
+  it "rejects an explicit foreign FabricIndex through the DSL attribute write path" do
+    cluster = build_map_writer(Matter::Fabric::MIN_FABRIC_INDEX)
+    foreign = GKM::GroupKeyMapStruct.new(257_u16, 417_u16, 2_u8)
+    callbacks = 0
+    cluster.on_before_write = ->(_attribute : UInt32) { callbacks += 1; nil }
+    cluster.on_before_direct_mutation = -> { callbacks += 1; nil }
+    cluster.on_version_changed = -> { callbacks += 1; nil }
+    before_state = cluster.save_state
+    before_version = cluster.data_version
+
+    cluster.write_attribute(GKM::ATTR_GROUP_KEY_MAP,
+      TLV::Serializable.serialize_value([foreign], nil)).status.should eq(IMCode::UnsupportedAccess)
+
+    cluster.save_state.should eq(before_state)
+    cluster.data_version.should eq(before_version)
+    callbacks.should eq(0)
+  end
+
   [Matter::Fabric::MIN_FABRIC_INDEX, Matter::Fabric::MAX_FABRIC_INDEX].each do |valid_fabric|
     it "accepts matching and omitted FabricIndex forms for fabric #{valid_fabric}" do
       cluster = build_map_writer(valid_fabric)
