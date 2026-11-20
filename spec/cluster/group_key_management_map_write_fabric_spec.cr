@@ -85,6 +85,33 @@ describe "GroupKeyManagement fabric-scoped GroupKeyMap writes" do
     callbacks.should eq(0)
   end
 
+  it "rejects a non-CASE, non-Group attribute write with a valid fabric before hooks" do
+    cluster = build_map_writer(Matter::Fabric::MIN_FABRIC_INDEX)
+    cluster.request_is_case_session = false
+    value = TLV::Serializable.serialize_value([] of GKM::GroupKeyMapStruct, nil)
+    callbacks = 0
+    cluster.on_before_write = ->(_attribute : UInt32) { callbacks += 1; nil }
+    cluster.on_before_direct_mutation = -> { callbacks += 1; nil }
+    cluster.on_version_changed = -> { callbacks += 1; nil }
+    before_state = cluster.save_state
+    before_version = cluster.data_version
+
+    cluster.write_attribute(GKM::ATTR_GROUP_KEY_MAP, value).status.should eq(IMCode::UnsupportedAccess)
+
+    cluster.save_state.should eq(before_state)
+    cluster.data_version.should eq(before_version)
+    callbacks.should eq(0)
+  end
+
+  it "keeps authenticated Group writes eligible for the Manage path" do
+    cluster = build_map_writer(Matter::Fabric::MIN_FABRIC_INDEX)
+    cluster.request_is_case_session = false
+    cluster.request_auth_mode = Matter::InteractionModel::EntryAuthMode::Group
+    value = TLV::Serializable.serialize_value([] of GKM::GroupKeyMapStruct, nil)
+
+    cluster.write_attribute(GKM::ATTR_GROUP_KEY_MAP, value).status.should eq(IMCode::Success)
+  end
+
   [Matter::Fabric::MIN_FABRIC_INDEX, Matter::Fabric::MAX_FABRIC_INDEX].each do |valid_fabric|
     it "accepts matching and omitted FabricIndex forms for fabric #{valid_fabric}" do
       cluster = build_map_writer(valid_fabric)
