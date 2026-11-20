@@ -311,6 +311,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_migration_add_noc_before_complete : Bool = false
       getter? interrupt_after_migration_failsafe_recorded : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
+      getter? interrupt_before_migration_rollback_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
       getter? interrupt_before_migration_anchor_verified : Bool = false
@@ -371,6 +372,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_migration_add_noc_before_complete : Bool = false,
                      @interrupt_after_migration_failsafe_recorded : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
+                     @interrupt_before_migration_rollback_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_fabric_removed : Bool = false,
                      @interrupt_before_migration_anchor_verified : Bool = false,
