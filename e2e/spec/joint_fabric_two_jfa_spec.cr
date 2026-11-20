@@ -1083,6 +1083,66 @@ describe "three provisioned Joint Fabric Administrators" do
         entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
       end.should be_false
       # Roll back a first A identity before the later forward SDK migration.
+      sdk_ack_saved = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_complete_ack_saved: true))
+      sdk_ack_saved.status.should eq("error")
+      sdk_ack_saved.error.to_s.should contain("Injected interruption after durable CommissioningComplete acknowledgement")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_ack_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_ack_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
+      sdk_ack_controller_node = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_ack_controller_node.inspected_controller_migration_node_present.should be_false
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID
+      end.should be_true
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      sdk_ack_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_peer, anchor_bootstrap.fabric,
+        peer_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        sdk_peer, joiner_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_ack_report = anchor_im.read_attribute(session: sdk_ack_a_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+        fabric_filtered: false)
+      sdk_ack_data = sdk_ack_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_ack_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+        .from_tlv(sdk_ack_data.to_slice)
+      sdk_ack_fabrics.size.should eq(2)
+      sdk_ack_fabrics.any? do |fabric|
+        fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID
+      end.should be_true
+      sdk_ack_fabrics.any? do |fabric|
+        fabric.fabric_id == joiner_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == joiner_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_MIGRATION_OLD_NODE_ID
+      end.should be_true
       sdk_rollback_registration = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -1103,6 +1163,12 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
       sdk_rollback_registration_stage.inspected_migration_stage.should eq(
         Matter::Controller::JointFabricDeviceMigration::Stage::AddingAnchorNode.value)
+      sdk_ack_recovered_node = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_ack_recovered_node.inspected_controller_migration_node_present.should be_true
       jfa_node_list(anchor_im, anchor_session, anchor_peer,
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?

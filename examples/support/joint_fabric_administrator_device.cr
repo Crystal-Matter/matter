@@ -308,6 +308,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_participant_rewind_save : Bool = false
       getter? interrupt_after_participant_rewind_save : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
+      getter? interrupt_after_migration_complete_ack_saved : Bool = false
       getter? interrupt_after_migration_add_noc_before_complete : Bool = false
       getter? interrupt_after_migration_failsafe_recorded : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
@@ -369,6 +370,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_participant_rewind_save : Bool = false,
                      @interrupt_after_participant_rewind_save : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
+                     @interrupt_after_migration_complete_ack_saved : Bool = false,
                      @interrupt_after_migration_add_noc_before_complete : Bool = false,
                      @interrupt_after_migration_failsafe_recorded : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
@@ -4190,6 +4192,9 @@ module MatterJointFabricAdministrator
                          raise Matter::StorageError.new("Migration journal is missing at CommissioningComplete")
           acknowledged.commissioning_acknowledged = true
           journal_store.save(acknowledged)
+          if request.interrupt_after_migration_complete_ack_saved?
+            raise Matter::TransportError.new("Injected interruption after durable CommissioningComplete acknowledgement")
+          end
         },
         fail_safe_deadline: ->(deadline : Int64, max_seconds : UInt16) {
           armed = journal_store.load(old_fabric.fabric_id,
