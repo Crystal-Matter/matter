@@ -629,6 +629,10 @@ blocked removal for operator reconciliation.
   absent and completes the journal without sending RemoveNode again.
   Before that handoff, the fixture uses a separate A Node ID to roll back the
   same device after a committed Anchor registration. It restarts B after
+  durably saving `RollingBack` but before sending Anchor RemoveNode. Fresh
+  CASE to the SDK device and authenticated NodeList reads show both fabrics
+  and registrations still present; an ordinary forward retry stays blocked,
+  while explicit rollback resumes the removal sequence. It then restarts B after
   Anchor RemoveNode commits but before B advances its rollback journal,
   refuses automatic replay, then explicitly resumes. The device then commits
   Anchor RemoveFabric, but its encoded InvokeResponse is discarded at the
@@ -1015,7 +1019,8 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    covers the post-CommissioningComplete acknowledgement gap, an AnchorVerified
    restart before final Anchor NodeList confirmation, pre-RemoveFabric and
    pre-RemoveNode no-effect, and post-RemoveFabric/RemoveNode recovery through
-   live B restarts.
+   live B restarts. It also covers a rollback-start restart before Anchor
+   RemoveNode and recovery after the rollback removal commands.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected

@@ -4246,6 +4246,9 @@ module MatterJointFabricAdministrator
             if request.interrupt_after_migration_anchor_verified? && entry.stage.anchor_verified?
               raise Matter::TransportError.new("Injected interruption after Anchor verification")
             end
+            if request.interrupt_before_migration_rollback_node_removed? && entry.stage.rolling_back?
+              raise Matter::TransportError.new("Injected interruption before rollback Anchor RemoveNode")
+            end
             if request.interrupt_before_migration_old_fabric_removed? && entry.stage.removing_old_fabric?
               raise Matter::TransportError.new("Injected interruption before device RemoveFabric")
             end
