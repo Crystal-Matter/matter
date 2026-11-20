@@ -9,8 +9,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Group Key Management command fabric scope
 
-- Reject all four KeySet wire commands when the accessing fabric index is
-  missing or reserved, before command hooks or key-set callbacks run.
+- Reject all four KeySet wire commands unless a CASE session supplies a valid
+  accessing fabric index, before command hooks or key-set callbacks run.
 
 ### Matter 1.6 Joint Fabric SDK migration pre-removal restart
 
