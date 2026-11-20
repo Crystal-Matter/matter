@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Joint Fabric SDK rollback restart
+
+- Verify independent SDK device migration rollback after B saves `RollingBack`
+  but before Anchor RemoveNode. After B restarts, both fabrics and NodeLists
+  remain, and explicit rollback resumes without an automatic forward replay.
+
 ### Matter 1.6 Joint Fabric SDK migration pre-removal restart
 
 - Restart the joining Administrator before removing the independent SDK
