@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Speaker, Snapshot Watermark and OSD features.
+    # Snapshot, and opt-in Speaker, Image Control, Watermark and OSD features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -14,6 +14,7 @@ module Matter
       feature :snapshot, bit: 2
       feature :privacy, bit: 3
       feature :speaker, bit: 4
+      feature :image_control, bit: 5
       feature :watermark, bit: 6
       feature :osd, bit: 7
 
@@ -26,6 +27,7 @@ module Matter
       MAX_KEY_FRAME_INTERVAL = 65_500_u16
       MAX_SNAPSHOT_QUALITY   =     100_u8
       MAX_SNAPSHOT_DATA_SIZE =     65_000
+      MAX_IMAGE_ROTATION     =    359_u16
       SUPPORTED_BIT_DEPTHS   = [8_u8, 16_u8, 24_u8, 32_u8]
 
       enum StreamUsage : UInt8
@@ -693,6 +695,9 @@ module Matter
         requires: :audio, on_change: :notify_microphone
       attribute 0x001F, :microphone_max_level, UInt8, default: 0_u8, fixed: true, read_access: :manage, requires: :audio
       attribute 0x0020, :microphone_min_level, UInt8, default: 0_u8, fixed: true, read_access: :manage, requires: :audio
+      attribute 0x0022, :image_rotation, UInt16, default: 0_u16,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, requires: :image_control
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
@@ -714,6 +719,15 @@ module Matter
 
       before_write :viewport do |value|
         InteractionModel::Status.constraint_error unless valid_viewport?(value)
+      end
+
+      before_write :image_rotation do |value|
+        if value <= MAX_IMAGE_ROTATION
+          callback = @image_rotation_callback
+          callback ? callback.call(value) : InteractionModel::Status.invalid_in_state
+        else
+          InteractionModel::Status.constraint_error
+        end
       end
 
       command 0x00, :audio_stream_allocate, request: AudioStreamAllocateRequest,
@@ -752,6 +766,7 @@ module Matter
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
+      @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
@@ -790,7 +805,7 @@ module Matter
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::Watermark | Feature::Osd).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
         raise ArgumentError.new("Speaker requires Audio") if @feature_map.speaker? && !@feature_map.audio?
@@ -991,6 +1006,15 @@ module Matter
         status = block.call(@speaker_muted, @speaker_volume_level)
         raise ClusterError.new("Speaker host rejected initial settings", status.status) unless status.success?
         @speaker_callback = block
+      end
+
+      # The host applies orientation to pixels. Attach after restoring state;
+      # controller writes commit only after the host accepts the new rotation.
+      def on_image_rotation_changed(&block : UInt16 -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Image Control feature is disabled") unless @feature_map.image_control?
+        status = block.call(@image_rotation)
+        raise ClusterError.new("Image Control host rejected initial rotation", status.status) unless status.success?
+        @image_rotation_callback = block
       end
 
       # Independent consumers can react to delivery restrictions without
