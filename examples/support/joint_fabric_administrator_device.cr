@@ -4192,6 +4192,9 @@ module MatterJointFabricAdministrator
                          raise Matter::StorageError.new("Migration journal is missing at CommissioningComplete")
           acknowledged.commissioning_acknowledged = true
           journal_store.save(acknowledged)
+          if request.interrupt_after_migration_complete_ack_saved?
+            raise Matter::TransportError.new("Injected interruption after durable CommissioningComplete acknowledgement")
+          end
         },
         fail_safe_deadline: ->(deadline : Int64, max_seconds : UInt16) {
           armed = journal_store.load(old_fabric.fabric_id,
