@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Groupcast adoption write fabric validation
+
+- Require a CASE session with a valid accessing fabric index before accepting
+  GroupcastAdoption writes, preventing reserved-fabric state from being saved.
+
 ### Group Key Management map write fabric validation
 
 - Reject GroupKeyMap writes without CASE or authenticated Group context, or
