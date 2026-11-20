@@ -593,6 +593,13 @@ blocked removal for operator reconciliation.
   the completed handoff, and continues to the old-fabric removal boundary
   without recommissioning the device. The test records one completion command
   send and checks that recovery sends no duplicate.
+  A separate SDK rollback identity exercises the acknowledged side of that
+  boundary: B saves the successful CommissioningComplete acknowledgement and
+  stops before saving the A controller node. After B restarts, fresh CASE
+  confirms both SDK fabrics, both Datastores retain the device, and the local
+  A node is absent. A normal migration retry authenticates that state,
+  restores the local node, and reaches Anchor registration without waiting for
+  fail-safe expiry.
   The Crystal switch fixture also injects an interruption after it commits
   CommissioningComplete but before B durably records acknowledgement. It
   restarts B and checks that recovery waits the advertised cumulative fail-safe
@@ -1016,8 +1023,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    with independent ecosystem devices before claiming conformance. The SDK
    all-clusters migration verifies the successful independent device path;
    most interruption coverage still uses a Crystal target; the SDK device now
-   covers the post-CommissioningComplete acknowledgement gap, an AnchorVerified
-   restart before final Anchor NodeList confirmation, pre-RemoveFabric and
+   covers both lost and durably saved CommissioningComplete acknowledgements,
+   an AnchorVerified restart before final Anchor NodeList confirmation,
+   pre-RemoveFabric and
    pre-RemoveNode no-effect, and post-RemoveFabric/RemoveNode recovery through
    live B restarts. It also covers a rollback-start restart before Anchor
    RemoveNode and recovery after the rollback removal commands.

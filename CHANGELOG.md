@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Joint Fabric SDK completion acknowledgement recovery
+
+- Verify a joining Administrator restart after durably acknowledging the SDK
+  device's CommissioningComplete result but before saving its new controller
+  node. Recovery authenticates both fabrics and Datastores before restoring
+  the local node and continuing migration.
+
 ### Group Key Management command fabric scope
 
 - Reject all four KeySet wire commands unless a CASE session supplies a valid
