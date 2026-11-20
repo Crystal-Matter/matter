@@ -60,7 +60,7 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
   it "exposes Image Control rotation to an official controller" do
     device.commission!
     feature_map = snapshot_read(device, Matter::Cluster::Base::GLOBAL_FEATURE_MAP)
-      .int("FeatureMap").not_nil!
+      .int("FeatureMap") || raise "chip-tool omitted Camera AV FeatureMap"
     image_control = Matter::Cluster::CameraAvStreamManagement::Feature::ImageControl.value.to_i64
     (feature_map & image_control).should eq(image_control)
     rotation = snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_ROTATION)
