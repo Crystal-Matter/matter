@@ -11,9 +11,16 @@ describe "GroupKeyManagement fabric-scoped wire commands" do
     GKM::CMD_KEY_SET_READ_ALL_INDICES => nil,
   } of UInt32 => TLV::Any?
 
-  [nil, Matter::DataType::NO_FABRIC, UInt8::MAX].each do |invalid_fabric|
+  invalid_contexts = [
+    {nil, true},
+    {Matter::DataType::NO_FABRIC, true},
+    {UInt8::MAX, true},
+    {Matter::Fabric::MIN_FABRIC_INDEX, false},
+    {Matter::Fabric::MAX_FABRIC_INDEX, false},
+  ] of Tuple(UInt8?, Bool)
+  invalid_contexts.each do |invalid_fabric, is_case_session|
     commands.each do |command_id, fields|
-      it "rejects command #{command_id} for reserved fabric #{invalid_fabric} before callbacks or state changes" do
+      it "rejects command #{command_id} for fabric #{invalid_fabric}, CASE #{is_case_session} before callbacks or state changes" do
         cluster = build(GKM, 0)
         cluster.handle_key_set_write(GKM::KeySetWriteRequest.new(Matter::Cluster.create_key_set(id: 1_u16)),
           Matter::Fabric::MIN_FABRIC_INDEX)
@@ -30,7 +37,7 @@ describe "GroupKeyManagement fabric-scoped wire commands" do
         before_version = cluster.data_version
 
         expect_status(cluster.invoke_command(command_id, fields,
-          is_case_session: true, fabric_index: invalid_fabric), IMCode::UnsupportedAccess)
+          is_case_session: is_case_session, fabric_index: invalid_fabric), IMCode::UnsupportedAccess)
 
         cluster.save_state.should eq(before_state)
         cluster.data_version.should eq(before_version)

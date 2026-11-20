@@ -1,0 +1,17 @@
+name: Group Key Management fabric regression
+
+on:
+  push:
+    branches:
+      - codex/gkm-valid-fabric
+
+jobs:
+  focused_spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - run: crystal spec spec/cluster/group_key_management_fabric_wire_spec.cr -v --error-trace
