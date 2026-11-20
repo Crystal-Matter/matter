@@ -616,6 +616,10 @@ blocked removal for operator reconciliation.
   Before B's Datastore RemoveNode, the fixture now interrupts after saving
   RemovingOldNode, restarts B, checks that its NodeList is unchanged, and
   requires authenticated no-effect reconciliation before retrying RemoveNode.
+  The independent SDK migration fixture exercises the same pre-RemoveNode
+  restart boundary after the SDK device has moved to A. It verifies fresh A
+  CASE, the SDK device's sole A fabric, B's unchanged NodeList, blocked
+  automatic replay, and authenticated no-effect reconciliation before retry.
   It also restarts B after the migrated device commits RemoveFabric and after
   B's Datastore commits RemoveNode, with each acknowledgement lost before the
   migration journal advances. The first reconciliation rejects a missing
@@ -1009,8 +1013,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    all-clusters migration verifies the successful independent device path;
    most interruption coverage still uses a Crystal target; the SDK device now
    covers the post-CommissioningComplete acknowledgement gap, an AnchorVerified
-   restart before final Anchor NodeList confirmation, pre-RemoveFabric no-effect, and
-   post-RemoveFabric recovery through live B restarts.
+   restart before final Anchor NodeList confirmation, pre-RemoveFabric and
+   pre-RemoveNode no-effect, and post-RemoveFabric/RemoveNode recovery through
+   live B restarts.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
