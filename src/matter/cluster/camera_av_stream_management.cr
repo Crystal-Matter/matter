@@ -724,7 +724,12 @@ module Matter
       before_write :image_rotation do |value|
         if value <= MAX_IMAGE_ROTATION
           callback = @image_rotation_callback
-          callback ? callback.call(value) : InteractionModel::Status.invalid_in_state
+          if callback
+            status = callback.call(value)
+            status unless status.success?
+          else
+            InteractionModel::Status.invalid_in_state
+          end
         else
           InteractionModel::Status.constraint_error
         end
