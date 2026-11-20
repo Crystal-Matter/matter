@@ -308,6 +308,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_participant_rewind_save : Bool = false
       getter? interrupt_after_participant_rewind_save : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
+      getter? interrupt_after_migration_complete_ack_saved : Bool = false
       getter? interrupt_after_migration_add_noc_before_complete : Bool = false
       getter? interrupt_after_migration_failsafe_recorded : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
@@ -369,6 +370,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_participant_rewind_save : Bool = false,
                      @interrupt_after_participant_rewind_save : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
+                     @interrupt_after_migration_complete_ack_saved : Bool = false,
                      @interrupt_after_migration_add_noc_before_complete : Bool = false,
                      @interrupt_after_migration_failsafe_recorded : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
