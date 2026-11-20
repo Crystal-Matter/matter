@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group Key Management command fabric scope
+
+- Reject all four KeySet wire commands unless a CASE session supplies a valid
+  accessing fabric index, before command hooks or key-set callbacks run.
+
 ### Matter 1.6 Joint Fabric SDK rollback restart
 
 - Verify independent SDK device migration rollback after B saves `RollingBack`
