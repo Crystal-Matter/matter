@@ -57,6 +57,7 @@ describe "Matter 1.6 Groupcast adoption wire behavior" do
       keys.replace_groupcast_membership(0x1234_u16, [1_u16], 7_u16, fabric)
     end
 
+    keys.request_is_case_session = true
     keys.request_fabric_index = 1_u8
     forged = Matter::Cluster::GroupKeyManagement::GroupcastAdoptionStruct.new(true, 2_u8)
     status = keys.write_attribute(Matter::Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION,
