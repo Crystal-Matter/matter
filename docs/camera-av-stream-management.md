@@ -33,8 +33,15 @@ require their Boolean flags in VideoStreamAllocate and expose the Manage-privile
 VideoStreamModify command. The host must admit overlay settings during allocation
 and apply changes through `on_video_modify` before the library commits them.
 The host renders overlays into video frames; the library tracks stream settings.
-VDO without those features does not enable overlay, snapshot, or image-control
-commands.
+VDO without those features does not enable overlay or snapshot commands.
+
+The optional Image Control (`ICTL`) profile requires VDO or SNP and exposes a Manage-privileged,
+nonvolatile `ImageRotation` setting from 0 through 359 degrees. Attach
+`on_image_rotation_changed` after restoring the cluster; it receives the
+restored value and must accept each controller write before the new angle is
+committed. The host rotates output pixels. The synthetic Snapshot Camera
+fixture exercises this profile with official chip-tool attribute reads and
+writes; it does not rotate the checked-in JPEG.
 
 The optional DPTZ profile of Camera AV Settings User Level Management
 binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`

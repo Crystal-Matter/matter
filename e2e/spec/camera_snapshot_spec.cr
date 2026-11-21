@@ -57,6 +57,22 @@ end
 describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
   device = E2E::Device["matter_camera_snapshot"]
 
+  it "exposes Image Control rotation to an official controller" do
+    device.commission!
+    feature_map = snapshot_read(device, Matter::Cluster::Base::GLOBAL_FEATURE_MAP)
+      .int("FeatureMap") || raise "chip-tool omitted Camera AV FeatureMap"
+    image_control = Matter::Cluster::CameraAvStreamManagement::Feature::ImageControl.value.to_i64
+    (feature_map & image_control).should eq(image_control)
+    rotation = snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_ROTATION)
+    rotation.int("ImageRotation").should eq(0_i64)
+    expect_success(device.write("cameraavstreammanagement", "image-rotation", "90", 1))
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_ROTATION)
+      .int("ImageRotation").should eq(90_i64)
+    expect_failure(device.write("cameraavstreammanagement", "image-rotation", "360", 1), "CONSTRAINT_ERROR")
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_ROTATION)
+      .int("ImageRotation").should eq(90_i64)
+  end
+
   it "commissions SNP, allocates and captures a bounded still image" do
     device.commission!
     snapshot_type = expect_success(device.read("descriptor", "device-type-list", 1))

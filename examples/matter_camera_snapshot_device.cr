@@ -40,7 +40,8 @@ module MatterCameraSnapshot
           CameraAv::ImageCodec::Jpeg, true, true)],
         max_concurrent_encoders: 1_u8,
         max_encoded_pixel_rate: 3_072_000_u32,
-        feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy
+        feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy |
+                     CameraAv::Feature::ImageControl
     end
 
     protected def before_start : Nil
@@ -51,6 +52,7 @@ module MatterCameraSnapshot
       camera.on_snapshot_capture do |_stream, resolution|
         CameraAv::SnapshotImage.new(snapshot, CameraAv::ImageCodec::Jpeg, resolution)
       end
+      camera.on_image_rotation_changed { |_angle| Matter::InteractionModel::Status.success }
       super
     end
   end

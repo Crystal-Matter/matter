@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and adoption records while preserving valid fabrics. Drop map entries whose
   key set exists only on another fabric, and persist the sanitized state.
 
+### Matter 1.6 Camera AV Image Control rotation
+
+- Add the opt-in ICTL profile with persistent ImageRotation (0–359 degrees),
+  Manage-privileged writes, host admission before commit, and official
+  chip-tool read/write coverage on the synthetic Snapshot Camera.
+
 ### Groupcast adoption write fabric validation
 
 - Require a CASE session with a valid accessing fabric index before accepting
