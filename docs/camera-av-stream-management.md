@@ -35,6 +35,17 @@ and apply changes through `on_video_modify` before the library commits them.
 The host renders overlays into video frames; the library tracks stream settings.
 VDO without those features does not enable overlay or snapshot commands.
 
+The optional Local Storage (`STOR`) feature exposes nonvolatile,
+Manage-privileged recording controls when combined with VDO or SNP:
+`LocalVideoRecordingEnabled` for VDO+STOR and
+`LocalSnapshotRecordingEnabled` for SNP+STOR. Both start disabled. Attach
+`on_local_video_recording_changed` or `on_local_snapshot_recording_changed`
+after restoring the cluster; each callback first receives the restored value.
+Controller writes return `InvalidInState` until its host callback is attached,
+and a rejected write leaves the reported setting unchanged. The host owns the
+storage medium and actual recording, including privacy enforcement and media
+retention.
+
 The optional Image Control (`ICTL`) profile requires VDO or SNP and exposes a Manage-privileged,
 nonvolatile `ImageRotation` setting from 0 through 359 degrees. Attach
 `on_image_rotation_changed` after restoring the cluster; it receives the

@@ -67,7 +67,9 @@ describe "Camera AV Local Storage feature" do
 
     snapshot = storage_snapshot_camera
     expect_status(write(snapshot, StorageCamera::ATTR_LOCAL_SNAPSHOT_RECORDING_ENABLED, true), StorageCode::InvalidInState)
-    snapshot.on_local_snapshot_recording_changed { |_enabled| StorageStatus.invalid_in_state }
+    snapshot.on_local_snapshot_recording_changed do |enabled|
+      enabled ? StorageStatus.invalid_in_state : StorageStatus.success
+    end
     expect_status(write(snapshot, StorageCamera::ATTR_LOCAL_SNAPSHOT_RECORDING_ENABLED, true), StorageCode::InvalidInState)
     read(snapshot, StorageCamera::ATTR_LOCAL_SNAPSHOT_RECORDING_ENABLED).should be_false
   end

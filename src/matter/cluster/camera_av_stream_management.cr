@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Speaker, Image Control, Watermark and OSD features.
+    # Snapshot, and opt-in Speaker, Image Control, Watermark, OSD and Local Storage features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -17,6 +17,7 @@ module Matter
       feature :image_control, bit: 5
       feature :watermark, bit: 6
       feature :osd, bit: 7
+      feature :local_storage, bit: 8
 
       MIN_STREAM_ID          =      0_u16
       MAX_STREAM_ID          = 65_534_u16
@@ -698,6 +699,12 @@ module Matter
       attribute 0x0022, :image_rotation, UInt16, default: 0_u16,
         writable: true, read_access: :manage, write_access: :manage,
         persist: true, requires: :image_control
+      attribute 0x0025, :local_video_recording_enabled, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, requires: {video: true, local_storage: true}
+      attribute 0x0026, :local_snapshot_recording_enabled, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, requires: {snapshot: true, local_storage: true}
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
@@ -732,6 +739,26 @@ module Matter
           end
         else
           InteractionModel::Status.constraint_error
+        end
+      end
+
+      before_write :local_video_recording_enabled do |enabled|
+        callback = @local_video_recording_callback
+        if callback
+          status = callback.call(enabled)
+          status unless status.success?
+        else
+          InteractionModel::Status.invalid_in_state
+        end
+      end
+
+      before_write :local_snapshot_recording_enabled do |enabled|
+        callback = @local_snapshot_recording_callback
+        if callback
+          status = callback.call(enabled)
+          status unless status.success?
+        else
+          InteractionModel::Status.invalid_in_state
         end
       end
 
@@ -772,6 +799,8 @@ module Matter
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
+      @local_video_recording_callback : Proc(Bool, InteractionModel::Status)?
+      @local_snapshot_recording_callback : Proc(Bool, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
@@ -810,7 +839,7 @@ module Matter
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd | Feature::LocalStorage).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
         raise ArgumentError.new("Speaker requires Audio") if @feature_map.speaker? && !@feature_map.audio?
@@ -1023,6 +1052,22 @@ module Matter
         status = block.call(@image_rotation)
         raise ClusterError.new("Image Control host rejected initial rotation", status.status) unless status.success?
         @image_rotation_callback = block
+      end
+
+      # The host owns local recording. Apply restored settings before allowing
+      # a controller to change them, and commit writes only after host admission.
+      def on_local_video_recording_changed(&block : Bool -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Local Video Recording feature is disabled") unless @feature_map.video? && @feature_map.local_storage?
+        status = block.call(@local_video_recording_enabled)
+        raise ClusterError.new("Local Video Recording host rejected initial setting", status.status) unless status.success?
+        @local_video_recording_callback = block
+      end
+
+      def on_local_snapshot_recording_changed(&block : Bool -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Local Snapshot Recording feature is disabled") unless @feature_map.snapshot? && @feature_map.local_storage?
+        status = block.call(@local_snapshot_recording_enabled)
+        raise ClusterError.new("Local Snapshot Recording host rejected initial setting", status.status) unless status.success?
+        @local_snapshot_recording_callback = block
       end
 
       # Independent consumers can react to delivery restrictions without
