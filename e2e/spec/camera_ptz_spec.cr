@@ -53,4 +53,21 @@ describe "Matter 1.6 Camera AV Settings mechanical and digital PTZ interoperabil
       %({"0":"u:#{stream_id}","1":{"0":"u:0","1":"u:0","2":"u:100","3":"u:100"}})),
       "CONSTRAINT_ERROR")
   end
+
+  it "tracks a controller-allocated video stream without host registration" do
+    old_id = ptz_stream_id(device)
+    expect_success(device.chip("any", "command-by-id", "0x551", "0x6",
+      %({"0":"u:#{old_id}"}), device.node, PTZ_ENDPOINT))
+    ptz_read(device, "0x3").output.should_not contain("VideoStreamID:")
+
+    payload = %({"0":"u:3","1":"u:0","2":"u:15","3":"u:30","4":{"0":"u:320","1":"u:180"},"5":{"0":"u:1280","1":"u:720"},"6":"u:200000","7":"u:1000000","8":"u:30"})
+    stream_id = expect_success(device.chip("any", "command-by-id", "0x551", "0x3",
+      payload, device.node, PTZ_ENDPOINT)).int("videoStreamID")
+    stream_id.should_not be_nil
+    ptz_stream_id(device).to_i64.should eq(stream_id)
+
+    expect_success(device.chip("any", "command-by-id", "0x551", "0x6",
+      %({"0":"u:#{stream_id}"}), device.node, PTZ_ENDPOINT))
+    ptz_read(device, "0x3").output.should_not contain("VideoStreamID:")
+  end
 end
