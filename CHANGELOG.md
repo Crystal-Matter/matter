@@ -12,6 +12,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject Binding wire writes without CASE or authenticated Group context, or
   with a reserved accessing fabric index, before callbacks and state changes.
 
+### Matter 1.6 Camera AV Local Storage controls
+
+- Add the optional STOR feature and its mandatory VDO/SNP local recording
+  attributes, with Manage access, persistence, and host admission before writes.
+
 ### Matter 1.6 Camera AV Image Control flips
 
 - Add independently opt-in horizontal and vertical flip attributes with
