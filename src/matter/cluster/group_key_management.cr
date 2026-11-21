@@ -420,6 +420,8 @@ module Matter
             end
             return InteractionModel::Status.unsupported_access if foreign_index
           end
+        elsif attribute_id == ATTR_GROUPCAST_ADOPTION
+          return InteractionModel::Status.unsupported_access unless request_is_case_session? && valid_accessing_fabric?(request_fabric_index)
         end
         super
       rescue TLV::DeserializationError | TypeCastError | ArgumentError
