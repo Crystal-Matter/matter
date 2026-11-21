@@ -1,0 +1,27 @@
+name: Camera PTZ stream lifecycle interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/camera-ptz-interop.yml'
+      - 'e2e/spec/camera_ptz_spec.cr'
+      - 'examples/matter_camera_ptz_device.cr'
+      - 'src/matter/cluster/camera_av_settings_user_level_management.cr'
+      - 'src/matter/cluster/camera_av_stream_management.cr'
+
+jobs:
+  official-chip-tool-camera-ptz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify DPTZ stream lifecycle with official chip-tool
+        run: ./test --focused --service camera-ptz -- e2e/spec/camera_ptz_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-ptz-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn

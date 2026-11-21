@@ -65,10 +65,12 @@ without transforming its checked-in JPEG.
 
 The optional DPTZ profile of Camera AV Settings User Level Management
 binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
-returns, call `register_dptz_stream(id)` only for streams that support digital
-movement. The VDO cluster's global `Viewport` is used when its aspect ratio
-matches the stream; otherwise pass an existing, stream-compatible crop as the
-second argument. Registration rejects an incompatible crop.
+commits a new stream, `DPTZStreams` automatically gains an entry for that ID.
+The VDO cluster's global `Viewport` is used when its aspect ratio matches the
+stream; otherwise the initial crop uses the stream's maximum resolution,
+centered on the sensor. A host may call `register_dptz_stream(id, viewport)`
+to choose another compatible initial crop. Registration rejects an
+incompatible crop.
 `DPTZSetViewport` validates the sensor bounds, minimum crop size, and requested
 stream aspect ratio, then calls `on_dptz_set_viewport` for the host to apply the
 crop. It changes the reported viewport only after host success. Global

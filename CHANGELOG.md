@@ -12,6 +12,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject Binding wire writes without CASE or authenticated Group context, or
   with a reserved accessing fabric index, before callbacks and state changes.
 
+### Matter 1.6 Camera AV Settings DPTZ stream lifecycle
+
+- Track newly allocated video streams in DPTZStreams automatically, including
+  streams allocated before the settings server attaches. Remove entries on
+  final deallocation and choose a valid initial crop for mixed aspect ratios.
+
 ### Matter 1.6 Camera AV Local Storage controls
 
 - Add the optional STOR feature and its mandatory VDO/SNP local recording

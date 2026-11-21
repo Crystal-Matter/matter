@@ -30,11 +30,36 @@ private def allocate_dptz_video(av : DptzAv) : UInt16
 end
 
 describe "Camera AV Settings DPTZ" do
-  it "requires an aspect-matched initial crop for a stream on a different sensor aspect" do
+  it "discovers a video stream allocated before the DPTZ server attaches" do
+    av = dptz_av_camera
+    id = allocate_dptz_video(av)
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
+    camera.dptz_streams.first.viewport.should eq(av.viewport)
+  end
+
+  it "keeps the DPTZ entry until a reused stream's final deallocation" do
+    av = dptz_av_camera
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    id = allocate_dptz_video(av)
+    invoke_response(av, DptzAv::CMD_VIDEO_STREAM_ALLOCATE, dptz_video_request,
+      DptzAv::VideoStreamAllocateResponse).video_stream_id.should eq(id)
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
+
+    av.on_video_deallocate { |_id| DptzStatus.success }
+    expect_success(invoke(av, DptzAv::CMD_VIDEO_STREAM_DEALLOCATE,
+      DptzAv::VideoStreamDeallocateRequest.new(id)))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
+    expect_success(invoke(av, DptzAv::CMD_VIDEO_STREAM_DEALLOCATE,
+      DptzAv::VideoStreamDeallocateRequest.new(id)))
+    camera.dptz_streams.should be_empty
+  end
+
+  it "registers an aspect-matched initial crop for a stream on a different sensor aspect" do
     av = dptz_av_camera(1440_u16)
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     id = allocate_dptz_video(av)
-    expect_status(camera.register_dptz_stream(id), DptzCode::ConstraintError)
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(320_u16, 360_u16, 1600_u16, 1080_u16))
     viewport = DptzAv::Viewport.new(0_u16, 180_u16, 1920_u16, 1260_u16)
     expect_success(camera.register_dptz_stream(id, viewport))
     camera.dptz_streams.first.viewport.should eq(viewport)
@@ -78,7 +103,7 @@ describe "Camera AV Settings DPTZ" do
       0x06_u32,
     ])
     id = allocate_dptz_video(av)
-    expect_success(camera.register_dptz_stream(id))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
     camera.on_pan_move { |_target| DptzStatus.success }
     expect_success(invoke(camera, DptzCamera::CMD_MPTZ_SET_POSITION,
       DptzCamera::MPTZSetPositionRequest.new(15_i16)))
@@ -106,8 +131,7 @@ describe "Camera AV Settings DPTZ" do
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     id = allocate_dptz_video(av)
     expect_status(invoke(camera, DptzCamera::CMD_DPTZ_SET_VIEWPORT,
-      DptzCamera::DPTZSetViewportRequest.new(id, DptzAv::Viewport.new(0_u16, 0_u16, 960_u16, 540_u16))), DptzCode::NotFound)
-    expect_success(camera.register_dptz_stream(id))
+      DptzCamera::DPTZSetViewportRequest.new(id + 1_u16, DptzAv::Viewport.new(0_u16, 0_u16, 960_u16, 540_u16))), DptzCode::NotFound)
     camera.dptz_streams.first.video_stream_id.should eq(id)
     camera.dptz_streams.first.viewport.should eq(av.viewport)
     camera.dptz_streams.first.to_tlv.as_structure.keys.should eq([0_u8, 1_u8])
@@ -141,7 +165,7 @@ describe "Camera AV Settings DPTZ" do
     av = dptz_av_camera
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     id = allocate_dptz_video(av)
-    expect_success(camera.register_dptz_stream(id))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
     saved = camera.save_state.as(Matter::Storage::Document)
     rebound = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     rebound.restore_state(saved)
@@ -156,7 +180,7 @@ describe "Camera AV Settings DPTZ" do
     restored.dptz_streams.should be_empty
 
     another_id = allocate_dptz_video(av)
-    expect_success(camera.register_dptz_stream(another_id))
+    camera.dptz_streams.map(&.video_stream_id).should eq([another_id])
     camera.dptz_streams.size.should eq(1)
     av.restore_state(av.save_state.as(Matter::Storage::Document))
     camera.dptz_streams.should be_empty
@@ -166,7 +190,7 @@ describe "Camera AV Settings DPTZ" do
     av = dptz_av_camera
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     id = allocate_dptz_video(av)
-    expect_success(camera.register_dptz_stream(id))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
     applied = [] of DptzAv::Viewport
     camera.on_dptz_set_viewport do |_stream_id, viewport|
       applied << viewport
@@ -196,7 +220,7 @@ describe "Camera AV Settings DPTZ" do
     av = dptz_av_camera
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     id = allocate_dptz_video(av)
-    expect_success(camera.register_dptz_stream(id))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
     command = DptzCamera::CMD_DPTZ_RELATIVE_MOVE
     missing_id = TLV::Any.new({1_u8 => TLV::Any.new(100_i16)} of TLV::TagId => TLV::Any)
     expect_status(invoke(camera, command, missing_id), DptzCode::InvalidCommand)

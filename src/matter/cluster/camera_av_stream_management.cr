@@ -822,6 +822,7 @@ module Matter
       @image_flip_callback : Proc(Bool, Bool, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
+      @video_allocate_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
       @viewport_observers = [] of Proc(Viewport, Nil)
       @next_audio_stream_id : UInt16 = MIN_STREAM_ID
@@ -1128,6 +1129,13 @@ module Matter
         @video_release_observers << block
       end
 
+      # Notify peers after a video allocation is committed, including streams
+      # that were allocated before an observer attached.
+      def on_video_allocated(&block : UInt16 -> Nil) : Nil
+        @video_allocate_observers << block
+        @allocated_video_streams.each { |stream| block.call(stream.video_stream_id) }
+      end
+
       def stream_delivery_allowed?(usage : StreamUsage) : Bool
         return false if @hard_privacy_mode_on || @microphone_muted
         privacy_allows?(usage)
@@ -1177,6 +1185,7 @@ module Matter
         @allocated_video_streams << VideoStream.new(id, request, 1_u8)
         @next_video_stream_id = advance_audio_id(id)
         increment_version_and_notify(ATTR_ALLOCATED_VIDEO_STREAMS)
+        @video_allocate_observers.each(&.call(id))
         VideoStreamAllocateResponse.new(id)
       end
 
