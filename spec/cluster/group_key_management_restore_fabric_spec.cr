@@ -46,6 +46,13 @@ describe "GroupKeyManagement persisted fabric recovery" do
     dirty.should eq(1)
 
     saved = restored.save_state || fail("sanitized state missing")
+    ["group_key_map", "group_table", "legacy_group_table", "groupcast_group_table", "groupcast_adoption"].each do |field|
+      rows = saved[field].as(Array(Matter::Storage::Type))
+      rows.each do |row|
+        fabric = row.as(Matter::Storage::Document)["fabric_index"].as(Int64)
+        (Matter::Fabric::MIN_FABRIC_INDEX.to_i64..Matter::Fabric::MAX_FABRIC_INDEX.to_i64).includes?(fabric).should be_true
+      end
+    end
     recovered_again = RestoreGKM.new(endpoint(0), feature_map: RestoreGKM::Feature::Groupcast)
     recovered_again.restore_state(saved)
     recovered_again.data_version.should eq(restored.data_version)
