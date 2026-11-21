@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera AV Settings DPTZ stream lifecycle
+
+- Track newly allocated video streams in DPTZStreams automatically, including
+  streams allocated before the settings server attaches. Remove entries on
+  final deallocation and choose a valid initial crop for mixed aspect ratios.
+
 ### Matter 1.6 Camera AV Image Control flips
 
 - Add independently opt-in horizontal and vertical flip attributes with

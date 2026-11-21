@@ -58,9 +58,7 @@ module MatterCameraPtz
       request = Video::VideoStreamAllocateRequest.new(Video::StreamUsage::LiveView, Video::VideoCodec::H264,
         15_u16, 30_u16, Video::VideoResolution.new(320_u16, 180_u16),
         Video::VideoResolution.new(1280_u16, 720_u16), 200_000_u32, 1_000_000_u32, 30_u16)
-      response = video.video_stream_allocate(request).as(Video::VideoStreamAllocateResponse)
-      status = settings.register_dptz_stream(response.video_stream_id)
-      raise Matter::ConfigurationError.new("Could not register synthetic PTZ stream") unless status.success?
+      video.video_stream_allocate(request).as(Video::VideoStreamAllocateResponse)
       super
     end
   end

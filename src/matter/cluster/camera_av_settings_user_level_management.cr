@@ -251,6 +251,10 @@ module Matter
             raise ArgumentError.new("DigitalPTZ requires same-endpoint Video stream management")
           end
           @video_stream_management = source
+          source.on_video_allocated do |id|
+            status = register_dptz_stream(id)
+            raise ClusterError.new("Could not register DPTZ stream", status.status) unless status.success?
+          end
           source.on_video_released { |id| remove_dptz_stream(id) }
           source.on_viewport_changed { |viewport| update_dptz_viewports(viewport) }
         else
@@ -296,18 +300,37 @@ module Matter
         @on_preset_remove = block
       end
 
-      # The host calls this after allocating a VDO stream that supports digital
-      # movement. The crop must match the allocated stream's aspect ratio.
+      # The host may call this to register a specific initial crop. Video
+      # allocations are otherwise registered automatically.
       def register_dptz_stream(video_stream_id : UInt16,
                                viewport : CameraAvStreamManagement::Viewport? = nil) : InteractionModel::Status
         source = @video_stream_management || return InteractionModel::Status.invalid_in_state
         stream = source.allocated_video_streams.find(&.video_stream_id.==(video_stream_id))
         return InteractionModel::Status.not_found unless stream
-        return InteractionModel::Status.success if @dptz_streams.any?(&.video_stream_id.==(video_stream_id))
-        initial = viewport || source.viewport
+        initial = viewport || initial_dptz_viewport(source, stream)
         return InteractionModel::Status.constraint_error unless valid_stream_viewport?(source, stream, initial)
+        if index = @dptz_streams.index(&.video_stream_id.==(video_stream_id))
+          return InteractionModel::Status.success unless viewport
+          updated = @dptz_streams.dup
+          updated[index] = DPTZStream.new(video_stream_id, initial)
+          self.dptz_streams = updated
+          return InteractionModel::Status.success
+        end
         self.dptz_streams = @dptz_streams + [DPTZStream.new(video_stream_id, initial)]
         InteractionModel::Status.success
+      end
+
+      private def initial_dptz_viewport(source : CameraAvStreamManagement,
+                                        stream : CameraAvStreamManagement::VideoStream) : CameraAvStreamManagement::Viewport
+        current = source.viewport
+        return current if valid_stream_viewport?(source, stream, current)
+        sensor = source.video_sensor_params
+        resolution = stream.max_resolution
+        x1 = ((sensor.sensor_width.to_i32 - resolution.width) // 2).to_u16
+        y1 = ((sensor.sensor_height.to_i32 - resolution.height) // 2).to_u16
+        CameraAvStreamManagement::Viewport.new(x1, y1,
+          (x1.to_i32 + resolution.width).to_u16,
+          (y1.to_i32 + resolution.height).to_u16)
       end
 
       # The host applies the crop to actual video before state is committed.
