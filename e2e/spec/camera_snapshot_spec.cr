@@ -57,6 +57,20 @@ end
 describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
   device = E2E::Device["matter_camera_snapshot"]
 
+  it "exposes optional Image Control flip settings to the official controller" do
+    device.commission!
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_HORIZONTAL)
+      .bool("ImageFlipHorizontal").should be_false
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_VERTICAL)
+      .bool("ImageFlipVertical").should be_false
+    expect_success(device.write("cameraavstreammanagement", "image-flip-horizontal", "true", 1))
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_HORIZONTAL)
+      .bool("ImageFlipHorizontal").should be_true
+    expect_success(device.write("cameraavstreammanagement", "image-flip-vertical", "true", 1))
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_VERTICAL)
+      .bool("ImageFlipVertical").should be_true
+  end
+
   it "exposes Image Control rotation to an official controller" do
     device.commission!
     feature_map = snapshot_read(device, Matter::Cluster::Base::GLOBAL_FEATURE_MAP)

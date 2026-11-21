@@ -40,6 +40,8 @@ module MatterCameraSnapshot
           CameraAv::ImageCodec::Jpeg, true, true)],
         max_concurrent_encoders: 1_u8,
         max_encoded_pixel_rate: 3_072_000_u32,
+        image_flip_horizontal_supported: true,
+        image_flip_vertical_supported: true,
         feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy |
                      CameraAv::Feature::ImageControl
     end
@@ -53,6 +55,7 @@ module MatterCameraSnapshot
         CameraAv::SnapshotImage.new(snapshot, CameraAv::ImageCodec::Jpeg, resolution)
       end
       camera.on_image_rotation_changed { |_angle| Matter::InteractionModel::Status.success }
+      camera.on_image_flip_changed { |_horizontal, _vertical| Matter::InteractionModel::Status.success }
       super
     end
   end

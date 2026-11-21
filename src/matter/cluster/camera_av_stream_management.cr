@@ -698,6 +698,14 @@ module Matter
       attribute 0x0022, :image_rotation, UInt16, default: 0_u16,
         writable: true, read_access: :manage, write_access: :manage,
         persist: true, requires: :image_control
+      attribute 0x0023, :image_flip_horizontal, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, requires: :image_control,
+        present_if: :image_flip_horizontal_supported?
+      attribute 0x0024, :image_flip_vertical, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, requires: :image_control,
+        present_if: :image_flip_vertical_supported?
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
@@ -733,6 +741,16 @@ module Matter
         else
           InteractionModel::Status.constraint_error
         end
+      end
+
+      before_write :image_flip_horizontal do |value|
+        status = admit_image_flip(value, @image_flip_vertical)
+        status unless status.success?
+      end
+
+      before_write :image_flip_vertical do |value|
+        status = admit_image_flip(@image_flip_horizontal, value)
+        status unless status.success?
       end
 
       command 0x00, :audio_stream_allocate, request: AudioStreamAllocateRequest,
@@ -772,6 +790,7 @@ module Matter
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
+      @image_flip_callback : Proc(Bool, Bool, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
@@ -807,6 +826,8 @@ module Matter
                      @speaker_min_level : UInt8 = 0_u8,
                      @speaker_max_level : UInt8 = 100_u8,
                      @speaker_volume_level : UInt8 = 50_u8,
+                     @image_flip_horizontal_supported : Bool = false,
+                     @image_flip_vertical_supported : Bool = false,
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
@@ -829,6 +850,9 @@ module Matter
         end
         if @feature_map.image_control? && !(@feature_map.snapshot? || @feature_map.video?)
           raise ArgumentError.new("Image Control requires Snapshot or Video")
+        end
+        if (@image_flip_horizontal_supported || @image_flip_vertical_supported) && !@feature_map.image_control?
+          raise ArgumentError.new("Image Control flip settings require Image Control")
         end
         raise ArgumentError.new("Audio feature requires microphone capabilities") if @feature_map.audio? && !@microphone_capabilities
         if @feature_map.snapshot?
@@ -1023,6 +1047,25 @@ module Matter
         status = block.call(@image_rotation)
         raise ClusterError.new("Image Control host rejected initial rotation", status.status) unless status.success?
         @image_rotation_callback = block
+      end
+
+      def image_flip_horizontal_supported? : Bool
+        @image_flip_horizontal_supported
+      end
+
+      def image_flip_vertical_supported? : Bool
+        @image_flip_vertical_supported
+      end
+
+      # The host applies any supported flips to pixels after accepting the
+      # restored state and each subsequent controller write.
+      def on_image_flip_changed(&block : Bool, Bool -> InteractionModel::Status) : Nil
+        unless @feature_map.image_control? && (@image_flip_horizontal_supported || @image_flip_vertical_supported)
+          raise ArgumentError.new("Image Control flips are disabled")
+        end
+        status = block.call(@image_flip_horizontal, @image_flip_vertical)
+        raise ClusterError.new("Image Control host rejected initial flips", status.status) unless status.success?
+        @image_flip_callback = block
       end
 
       # Independent consumers can react to delivery restrictions without
@@ -1398,6 +1441,11 @@ module Matter
       private def admit_speaker_settings(muted : Bool, volume : UInt8) : InteractionModel::Status
         callback = @speaker_callback || return InteractionModel::Status.invalid_in_state
         callback.call(muted, volume)
+      end
+
+      private def admit_image_flip(horizontal : Bool, vertical : Bool) : InteractionModel::Status
+        callback = @image_flip_callback || return InteractionModel::Status.invalid_in_state
+        callback.call(horizontal, vertical)
       end
 
       private def report_microphone_settings : Nil
