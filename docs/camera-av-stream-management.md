@@ -35,6 +35,15 @@ and apply changes through `on_video_modify` before the library commits them.
 The host renders overlays into video frames; the library tracks stream settings.
 VDO without those features does not enable overlay or snapshot commands.
 
+The optional High Dynamic Range (`HDR`) feature requires VDO or SNP and
+exposes the nonvolatile, Manage-privileged `HDRModeEnabled` setting. For
+VDO+HDR, `VideoSensorParams.MaxHDRFPS` is mandatory and must be between 1 and
+`MaxFPS`; VDO without HDR omits this field. Attach `on_hdr_mode_changed`
+after restoring the cluster. The host must accept the restored setting before
+controller writes can change it, and a rejected write leaves the reported
+setting unchanged. The host owns HDR image processing and enforces its sensor
+frame-rate limit while HDR is enabled.
+
 The optional Local Storage (`STOR`) feature exposes nonvolatile,
 Manage-privileged recording controls when combined with VDO or SNP:
 `LocalVideoRecordingEnabled` for VDO+STOR and

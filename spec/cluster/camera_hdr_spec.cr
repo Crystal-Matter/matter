@@ -34,6 +34,7 @@ describe "Camera AV High Dynamic Range feature" do
     snapshot = hdr_snapshot_camera
     video.attributes.map(&.id.id).should contain(HdrCamera::ATTR_HDR_MODE_ENABLED)
     snapshot.attributes.map(&.id.id).should contain(HdrCamera::ATTR_HDR_MODE_ENABLED)
+    snapshot.attributes.map(&.id.id).should_not contain(HdrCamera::ATTR_VIDEO_SENSOR_PARAMS)
     read_tlv(video, HdrCamera::ATTR_VIDEO_SENSOR_PARAMS).as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8])
     read_tlv(video, HdrCamera::ATTR_VIDEO_SENSOR_PARAMS).as_structure[3_u8].value.should eq(15_u16)
     read(video, HdrCamera::ATTR_HDR_MODE_ENABLED).should be_false
@@ -55,6 +56,15 @@ describe "Camera AV High Dynamic Range feature" do
     end
     expect_raises(ArgumentError) do
       hdr_video_camera(HdrCamera::VideoSensorParams.new(640_u16, 480_u16, 30_u16, 15_u16), HdrCamera::Feature::Video)
+    end
+    microphone = HdrCamera::AudioCapabilities.new(1_u8,
+      [HdrCamera::AudioCodec::Opus], [48_000_u32], [16_u8])
+    expect_raises(ArgumentError, "High Dynamic Range requires Snapshot or Video") do
+      build(HdrCamera,
+        supported_stream_usages: [HdrCamera::StreamUsage::LiveView],
+        max_content_buffer_size: 1024_u32, max_network_bandwidth: 100_000_u32,
+        microphone_capabilities: microphone,
+        feature_map: HdrCamera::Feature::Audio | HdrCamera::Feature::HighDynamicRange)
     end
   end
 
