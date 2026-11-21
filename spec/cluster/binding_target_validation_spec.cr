@@ -9,6 +9,7 @@ private alias BindingTarget = BindingCluster::Target
 private alias BindingStatus = Matter::InteractionModel::StatusCode
 
 private def write_bindings(cluster : BindingCluster, entries : Array(BindingTarget)) : BindingStatus
+  cluster.request_is_case_session = true
   cluster.write_attribute(BindingCluster::ATTR_BINDING, TLV::Serializable.serialize_value(entries, nil)).status
 end
 
