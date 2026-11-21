@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera AV Image Control flips
+
+- Add independently opt-in horizontal and vertical flip attributes with
+  persistent Manage-privileged state, host admission before commit, and
+  official chip-tool read/write coverage. Rotation-only hosts remain unchanged.
+
 ### Matter 1.6 Camera AV Image Control rotation
 
 - Add the opt-in ICTL profile with persistent ImageRotation (0–359 degrees),

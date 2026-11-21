@@ -59,12 +59,16 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
 
   it "exposes optional Image Control flip settings to the official controller" do
     device.commission!
-    snapshot_read(device, 0x0023_u32).bool("ImageFlipHorizontal").should eq(false)
-    snapshot_read(device, 0x0024_u32).bool("ImageFlipVertical").should eq(false)
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_HORIZONTAL)
+      .bool("ImageFlipHorizontal").should eq(false)
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_VERTICAL)
+      .bool("ImageFlipVertical").should eq(false)
     expect_success(device.write("cameraavstreammanagement", "image-flip-horizontal", "true", 1))
-    snapshot_read(device, 0x0023_u32).bool("ImageFlipHorizontal").should eq(true)
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_HORIZONTAL)
+      .bool("ImageFlipHorizontal").should eq(true)
     expect_success(device.write("cameraavstreammanagement", "image-flip-vertical", "true", 1))
-    snapshot_read(device, 0x0024_u32).bool("ImageFlipVertical").should eq(true)
+    snapshot_read(device, Matter::Cluster::CameraAvStreamManagement::ATTR_IMAGE_FLIP_VERTICAL)
+      .bool("ImageFlipVertical").should eq(true)
   end
 
   it "exposes Image Control rotation to an official controller" do
