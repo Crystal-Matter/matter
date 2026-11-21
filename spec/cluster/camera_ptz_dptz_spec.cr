@@ -38,6 +38,23 @@ describe "Camera AV Settings DPTZ" do
     camera.dptz_streams.first.viewport.should eq(av.viewport)
   end
 
+  it "keeps the DPTZ entry until a reused stream's final deallocation" do
+    av = dptz_av_camera
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    id = allocate_dptz_video(av)
+    invoke_response(av, DptzAv::CMD_VIDEO_STREAM_ALLOCATE, dptz_video_request,
+      DptzAv::VideoStreamAllocateResponse).video_stream_id.should eq(id)
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
+
+    av.on_video_deallocate { |_id| DptzStatus.success }
+    expect_success(invoke(av, DptzAv::CMD_VIDEO_STREAM_DEALLOCATE,
+      DptzAv::VideoStreamDeallocateRequest.new(id)))
+    camera.dptz_streams.map(&.video_stream_id).should eq([id])
+    expect_success(invoke(av, DptzAv::CMD_VIDEO_STREAM_DEALLOCATE,
+      DptzAv::VideoStreamDeallocateRequest.new(id)))
+    camera.dptz_streams.should be_empty
+  end
+
   it "registers an aspect-matched initial crop for a stream on a different sensor aspect" do
     av = dptz_av_camera(1440_u16)
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
