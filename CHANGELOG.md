@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group Key Management persisted fabric recovery
+
+- Filter reserved fabric indexes from restored key sets, maps, group tables,
+  and adoption records while preserving valid fabrics. Drop map entries whose
+  key set exists only on another fabric, and persist the sanitized state.
+
 ### Groupcast adoption write fabric validation
 
 - Require a CASE session with a valid accessing fabric index before accepting

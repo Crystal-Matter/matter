@@ -1131,26 +1131,44 @@ module Matter
         protocol_lock = @protocol_lock
         protocol_lock.try(&.lock)
         @on_before_direct_mutation.try(&.call)
-        begin
+        staged = begin
           state = PersistedState.from_document(document)
-
-          @key_sets.clear
+          key_sets_by_fabric = Hash(UInt8, Hash(UInt16, GroupKeySetStruct)).new
           state.key_sets.each do |fabric_index, key_sets|
-            fabric_key_sets = (@key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new)
+            next unless valid_accessing_fabric?(fabric_index)
+            fabric_key_sets = Hash(UInt16, GroupKeySetStruct).new
             key_sets.each do |key_set|
               fabric_key_sets[key_set.group_key_set_id] = key_set.to_key_set
             end
+            key_sets_by_fabric[fabric_index] = fabric_key_sets
           end
-
-          @group_key_map = state.group_key_map
-          @group_table = state.group_table
-          @legacy_group_table = state.legacy_group_table || state.group_table.dup
-          @groupcast_group_table = state.groupcast_group_table || [] of GroupInfoMapStruct
-          @groupcast_adoption = state.groupcast_adoption
-
-          @data_version = state.data_version
+          group_key_map = state.group_key_map.select do |entry|
+            valid_accessing_fabric?(entry.fabric_index) &&
+              key_sets_by_fabric[entry.fabric_index]?.try(&.has_key?(entry.group_key_set_id)) == true
+          end
+          group_table = state.group_table.select { |entry| valid_accessing_fabric?(entry.fabric_index) }
+          legacy_source = state.legacy_group_table || state.group_table
+          legacy_group_table = legacy_source.select { |entry| valid_accessing_fabric?(entry.fabric_index) }
+          groupcast_source = state.groupcast_group_table || [] of GroupInfoMapStruct
+          groupcast_group_table = groupcast_source.select { |entry| valid_accessing_fabric?(entry.fabric_index) }
+          groupcast_adoption = state.groupcast_adoption.select { |entry| valid_accessing_fabric?(entry.fabric_index) }
+          pruned = key_sets_by_fabric.size != state.key_sets.size ||
+                   group_key_map.size != state.group_key_map.size ||
+                   group_table.size != state.group_table.size ||
+                   legacy_group_table.size != legacy_source.size ||
+                   groupcast_group_table.size != groupcast_source.size ||
+                   groupcast_adoption.size != state.groupcast_adoption.size
+          {state.data_version, key_sets_by_fabric, group_key_map, group_table,
+           legacy_group_table, groupcast_group_table, groupcast_adoption, pruned}
         rescue ex
-          Log.error(exception: ex) { "GroupKeyManagement restore_state failed; starting fresh" }
+          Log.error(exception: ex) { "GroupKeyManagement restore_state failed; retaining existing state" }
+          return
+        end
+
+        @data_version, @key_sets, @group_key_map, @group_table, @legacy_group_table, @groupcast_group_table, @groupcast_adoption, pruned = staged
+        if pruned
+          Log.warn { "Discarded invalid Group Key Management persisted fabric records" }
+          increment_version
         end
       ensure
         protocol_lock.try(&.unlock)
