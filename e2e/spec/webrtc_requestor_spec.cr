@@ -35,6 +35,8 @@ describe "Matter 1.6 WebRTC Requestor signaling interoperability" do
     expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"v=0"})), "INVALID_IN_STATE")
     expect_failure(requestor_command(device, "0x1", %({"0":"u:7","1":"v=0"})), "INVALID_IN_STATE")
     expect_failure(requestor_command(device, "0x2", %({"0":"u:7","1":[{"0":"candidate","1":"0","2":"u:0"}]})), "INVALID_IN_STATE")
+    # The empty Candidate is WebRTC's end-of-candidates marker, not an invalid struct.
+    expect_failure(requestor_command(device, "0x2", %({"0":"u:7","1":[{"0":"","1":"0","2":"u:0"}]})), "INVALID_IN_STATE")
     expect_failure(requestor_command(device, "0x3", %({"0":"u:7","1":"u:2"})), "INVALID_IN_STATE")
     expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"v=0"})), "NOT_FOUND")
   end

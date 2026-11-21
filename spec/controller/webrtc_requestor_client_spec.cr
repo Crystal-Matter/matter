@@ -99,4 +99,19 @@ describe Matter::Controller::WebrtcRequestorClient do
     expect_raises(Matter::ConfigurationError) { client.offer(binding, session, signaling_peer, "v=0", ice_servers: Array.new(11) { Signaling::IceServer.new(["stun:a"]) }) }
     im.calls.should be_empty
   end
+
+  it "sends an empty ICE candidate as an end-of-candidates indication" do
+    im = RequestorImFake.new
+    client = Signaling.new(im)
+    session = signaling_session
+    binding = client.bind(session, 2_u16, 7_u16)
+    marker = Signaling::IceCandidate.new("", "0", 0_u16)
+
+    client.ice_candidates(binding, session, signaling_peer, [marker])
+
+    im.calls.size.should eq(1)
+    im.calls.first.command.should eq(Signaling::CMD_ICE_CANDIDATES)
+    decoded = Signaling::IceCandidatesRequest.from_slice(im.calls.first.fields)
+    decoded.ice_candidates.should eq([marker])
+  end
 end
