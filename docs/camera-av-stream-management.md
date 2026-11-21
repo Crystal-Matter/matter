@@ -54,6 +54,15 @@ committed. The host rotates output pixels. The synthetic Snapshot Camera
 fixture exercises this profile with official chip-tool attribute reads and
 writes; it does not rotate the checked-in JPEG.
 
+Hosts may independently opt into `ImageFlipHorizontal` and `ImageFlipVertical`
+with `image_flip_horizontal_supported` and `image_flip_vertical_supported`.
+Both settings require ICTL, use Manage privilege, and persist across restart.
+After restore, attach `on_image_flip_changed`; it receives the current pair
+and must accept each requested pair before a controller write commits. A
+rotation-only host does not advertise either flip attribute. The host applies
+the flips to actual media; the synthetic Snapshot Camera reports settings
+without transforming its checked-in JPEG.
+
 The optional DPTZ profile of Camera AV Settings User Level Management
 binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
 returns, call `register_dptz_stream(id)` only for streams that support digital
