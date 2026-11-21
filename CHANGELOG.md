@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Requestor end-of-candidates
+
+- Allow an empty ICE Candidate string in outbound Requestor signaling, carrying
+  WebRTC's end-of-candidates marker while retaining the nonempty candidate list
+  and nonempty non-null SDPMid checks. Verify the receiver with official
+  chip-tool.
+
 ### Matter 1.6 Camera AV Settings DPTZ stream lifecycle
 
 - Track newly allocated video streams in DPTZStreams automatically, including

@@ -159,8 +159,8 @@ module Matter
       def ice_candidates(binding : Binding, session : Session::SecureContext,
                          peer : Socket::IPAddress,
                          candidates : Array(IceCandidate)) : Nil
-        if candidates.empty? || candidates.any? { |candidate| candidate.candidate.empty? || candidate.sdp_mid.try(&.empty?) }
-          raise Matter::ConfigurationError.new("ICE candidates must be nonempty and valid")
+        if candidates.empty? || candidates.any? { |candidate| candidate.sdp_mid.try(&.empty?) }
+          raise Matter::ConfigurationError.new("ICE candidates must be present with a nonempty SDPMid when provided")
         end
         invoke!(binding, session, peer, CMD_ICE_CANDIDATES,
           IceCandidatesRequest.new(binding.session_id, candidates).to_slice)
