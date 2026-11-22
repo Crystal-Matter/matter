@@ -14,6 +14,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and nonempty non-null SDPMid checks. Verify the receiver with official
   chip-tool.
 
+### Binding write fabric validation
+
+- Reject Binding wire writes without CASE or authenticated Group context, or
+  with a reserved accessing fabric index, before callbacks and state changes.
+
 ### Matter 1.6 Camera AV High Dynamic Range controls
 
 - Add the optional HDR feature, its VDO-only MaxHDRFPS sensor field and

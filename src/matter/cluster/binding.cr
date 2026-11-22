@@ -1,4 +1,5 @@
 require "./cluster"
+require "../fabric"
 
 module Matter
   module Cluster
@@ -49,7 +50,7 @@ module Matter
         read_access: :view, write_access: :manage, fabric_scoped: true
 
       before_write :binding do |entries|
-        if request_fabric_index.nil?
+        if !valid_accessing_fabric?(request_fabric_index)
           InteractionModel::Status.unsupported_access
         elsif entries.any? { |entry| !valid_target?(entry) }
           InteractionModel::Status.constraint_error
@@ -58,6 +59,21 @@ module Matter
 
       @binding = [] of Target
       @local_client_cluster_ids : Array(UInt32)? = nil
+
+      def write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
+        if attribute_id == ATTR_BINDING
+          unless (request_is_case_session? || request_auth_mode == InteractionModel::EntryAuthMode::Group) &&
+                 valid_accessing_fabric?(request_fabric_index)
+            return InteractionModel::Status.unsupported_access
+          end
+        end
+        super
+      end
+
+      private def valid_accessing_fabric?(fabric_index : UInt8?) : Bool
+        return false unless fabric_index
+        (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric_index)
+      end
 
       # Endpoint supplies its live ClientList when this cluster is installed.
       # A detached Binding cluster cannot verify a cluster-specific target.
