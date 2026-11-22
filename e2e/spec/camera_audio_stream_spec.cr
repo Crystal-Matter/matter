@@ -95,7 +95,7 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
 
   it "writes optional microphone AGC through chip-tool and restores it" do
     cluster = "cameraavstreammanagement"
-    attribute = "microphone-agc-enabled"
+    attribute = "microphone-agcenabled"
     expect_success(device.read(cluster, attribute, 1)).bool("MicrophoneAGCEnabled").should be_true
     expect_success(device.write(cluster, attribute, "false", 1))
     expect_success(device.read(cluster, attribute, 1)).bool("MicrophoneAGCEnabled").should be_false
