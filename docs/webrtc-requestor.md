@@ -15,6 +15,13 @@ The host should call `remove_session` on local cancellation or establishment
 timeout. Fabric removal also clears its sessions. The application must grant
 the Provider suitable ACL access to the Requestor endpoint.
 
+An `ICECandidates` command may contain a `Candidate` value of `""` to signal
+the end of candidates for an ICE generation. Matter 1.6 requires the candidate
+field but does not give it a minimum length; only a non-null `SDPMid` must have
+at least one character. The host should forward this marker to its WebRTC
+engine, as described by the [W3C WebRTC end-of-candidates
+indication](https://www.w3.org/TR/webrtc/#dom-peerconnection-addicecandidate).
+
 On End, the cluster passes the reason to the host, removes the tracked session,
 and returns the host's status. This matches the official SDK's
 `WebRTCTransportRequestorCluster::HandleEnd` and matter.js's Requestor server:

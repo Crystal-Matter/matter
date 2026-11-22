@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commit; the synthetic Audio Doorbell has official chip-tool read/write and
   restart coverage.
 
+### Matter 1.6 WebRTC Requestor end-of-candidates
+
+- Allow an empty ICE Candidate string in outbound Requestor signaling, carrying
+  WebRTC's end-of-candidates marker while retaining the nonempty candidate list
+  and nonempty non-null SDPMid checks. Verify the receiver with official
+  chip-tool.
+
 ### Matter 1.6 Camera AV status light controls
 
 - Add independent opt-in StatusLightEnabled and StatusLightBrightness

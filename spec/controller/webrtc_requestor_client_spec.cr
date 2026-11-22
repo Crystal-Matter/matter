@@ -96,7 +96,27 @@ describe Matter::Controller::WebrtcRequestorClient do
     session = signaling_session
     binding = client.bind(session, 2_u16, 7_u16)
     expect_raises(Matter::ConfigurationError) { client.ice_candidates(binding, session, signaling_peer, [] of Signaling::IceCandidate) }
+    expect_raises(Matter::ConfigurationError) { client.ice_candidates(binding, session, signaling_peer, [Signaling::IceCandidate.new("candidate:1", "")]) }
     expect_raises(Matter::ConfigurationError) { client.offer(binding, session, signaling_peer, "v=0", ice_servers: Array.new(11) { Signaling::IceServer.new(["stun:a"]) }) }
     im.calls.should be_empty
+  end
+
+  it "sends an empty ICE candidate as an end-of-candidates indication" do
+    im = RequestorImFake.new
+    client = Signaling.new(im)
+    session = signaling_session
+    binding = client.bind(session, 2_u16, 7_u16)
+    marker = Signaling::IceCandidate.new("", "0", 0_u16)
+
+    client.ice_candidates(binding, session, signaling_peer, [marker])
+
+    im.calls.size.should eq(1)
+    im.calls.first.command.should eq(Signaling::CMD_ICE_CANDIDATES)
+    decoded = Signaling::IceCandidatesRequest.from_slice(im.calls.first.fields)
+    decoded.session_id.should eq(binding.session_id)
+    decoded.ice_candidates.size.should eq(1)
+    decoded.ice_candidates.first.candidate.should eq("")
+    decoded.ice_candidates.first.sdp_mid.should eq("0")
+    decoded.ice_candidates.first.sdp_m_line_index.should eq(0_u16)
   end
 end
