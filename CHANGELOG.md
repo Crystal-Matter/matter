@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command hooks, host callbacks, rate limiting, and LoggedOut events. Reject
   host-initiated LoggedOut events for those indexes as well.
 
+### Matter 1.6 Camera AV microphone AGC
+
+- Add the optional ADO MicrophoneAGCEnabled attribute with a default-on,
+  nonvolatile Manage setting. Hosts opt in and admit changes before writes
+  commit; the synthetic Audio Doorbell has official chip-tool read/write and
+  restart coverage.
+
 ### Matter 1.6 WebRTC Requestor end-of-candidates
 
 - Allow an empty ICE Candidate string in outbound Requestor signaling, carrying

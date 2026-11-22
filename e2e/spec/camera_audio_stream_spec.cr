@@ -92,4 +92,15 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
       .bool("SpeakerMuted").should be_true
     read_camera_audio_int(device, 0x001A_u32).should eq(70_i64)
   end
+
+  it "writes optional microphone AGC through chip-tool and restores it" do
+    cluster = "cameraavstreammanagement"
+    attribute = "microphone-agcenabled"
+    expect_success(device.read(cluster, attribute, 1)).bool("MicrophoneAGCEnabled").should be_true
+    expect_success(device.write(cluster, attribute, "false", 1))
+    expect_success(device.read(cluster, attribute, 1)).bool("MicrophoneAGCEnabled").should be_false
+    device.restart!
+    expect_success(device.read(cluster, attribute, 1)).bool("MicrophoneAGCEnabled").should be_false
+    expect_success(device.write(cluster, attribute, "true", 1))
+  end
 end

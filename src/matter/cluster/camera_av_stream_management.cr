@@ -716,6 +716,10 @@ module Matter
         requires: :audio, on_change: :notify_microphone
       attribute 0x001F, :microphone_max_level, UInt8, default: 0_u8, fixed: true, read_access: :manage, requires: :audio
       attribute 0x0020, :microphone_min_level, UInt8, default: 0_u8, fixed: true, read_access: :manage, requires: :audio
+      attribute 0x0021, :microphone_agc_enabled, Bool, default: true,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, requires: :audio,
+        present_if: :microphone_agc_supported?
       attribute 0x0022, :image_rotation, UInt16, default: 0_u16,
         writable: true, read_access: :manage, write_access: :manage,
         persist: true, requires: :image_control
@@ -742,6 +746,16 @@ module Matter
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
+      end
+
+      before_write :microphone_agc_enabled do |enabled|
+        callback = @microphone_agc_callback
+        if callback
+          status = callback.call(enabled)
+          status unless status.success?
+        else
+          InteractionModel::Status.invalid_in_state
+        end
       end
 
       before_write :speaker_muted do |muted|
@@ -876,6 +890,7 @@ module Matter
       @allocated_snapshot_streams : Array(SnapshotStream)
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
+      @microphone_agc_callback : Proc(Bool, InteractionModel::Status)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
       @hdr_mode_callback : Proc(Bool, InteractionModel::Status)?
@@ -915,6 +930,7 @@ module Matter
                      @microphone_min_level : UInt8 = 0_u8,
                      @microphone_max_level : UInt8 = 100_u8,
                      @microphone_volume_level : UInt8 = 50_u8,
+                     @microphone_agc_supported : Bool = false,
                      @speaker_capabilities : AudioCapabilities? = nil,
                      @two_way_talk_support : TwoWayTalkSupport? = nil,
                      @speaker_min_level : UInt8 = 0_u8,
@@ -954,6 +970,7 @@ module Matter
           raise ArgumentError.new("Image Control flip settings require Image Control")
         end
         raise ArgumentError.new("Audio feature requires microphone capabilities") if @feature_map.audio? && !@microphone_capabilities
+        raise ArgumentError.new("Microphone AGC requires Audio") if @microphone_agc_supported && !@feature_map.audio?
         if @feature_map.snapshot?
           raise ArgumentError.new("Snapshot feature requires capabilities") if snapshot_capabilities.empty?
           raise ArgumentError.new("duplicate snapshot capability") unless snapshot_capabilities.uniq.size == snapshot_capabilities.size
@@ -1131,6 +1148,19 @@ module Matter
       def on_microphone_settings_changed(&block : Bool, UInt8 -> Nil) : Nil
         @microphone_callback = block
         report_microphone_settings
+      end
+
+      def microphone_agc_supported? : Bool
+        @microphone_agc_supported
+      end
+
+      # Apply restored AGC before accepting controller writes. The host owns
+      # microphone processing and can reject a requested change atomically.
+      def on_microphone_agc_changed(&block : Bool -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Microphone AGC is disabled") unless @microphone_agc_supported
+        status = block.call(@microphone_agc_enabled)
+        raise ClusterError.new("Microphone AGC host rejected initial setting", status.status) unless status.success?
+        @microphone_agc_callback = block
       end
 
       # Apply the restored state before accepting controller writes. The host
