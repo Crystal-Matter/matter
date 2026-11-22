@@ -13,6 +13,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attributes with Manage access, persistence, host admission and official
   chip-tool read/write coverage.
 
+### Binding write fabric validation
+
+- Reject Binding wire writes without CASE or authenticated Group context, or
+  with a reserved accessing fabric index, before callbacks and state changes.
+
 ### Matter 1.6 Camera AV High Dynamic Range controls
 
 - Add the optional HDR feature, its VDO-only MaxHDRFPS sensor field and
