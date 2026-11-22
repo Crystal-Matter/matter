@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Account Login fabric validation
+
+- Reject reserved fabric indexes for all Account Login wire commands before
+  command hooks, host callbacks, rate limiting, and LoggedOut events. Reject
+  host-initiated LoggedOut events for those indexes as well.
+
 ### Matter 1.6 WebRTC Requestor end-of-candidates
 
 - Allow an empty ICE Candidate string in outbound Requestor signaling, carrying
