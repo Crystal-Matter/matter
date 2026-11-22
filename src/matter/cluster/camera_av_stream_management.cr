@@ -63,6 +63,14 @@ module Matter
         Av1  = 3
       end
 
+      # Matter global ThreeLevelAutoEnum used by StatusLightBrightness.
+      enum ThreeLevelAuto : UInt8
+        Auto   = 0
+        Low    = 1
+        Medium = 2
+        High   = 3
+      end
+
       struct VideoResolution
         include TLV::Serializable
         include Storage::Record
@@ -725,6 +733,12 @@ module Matter
       attribute 0x0026, :local_snapshot_recording_enabled, Bool, default: false,
         writable: true, read_access: :manage, write_access: :manage,
         persist: true, requires: {snapshot: true, local_storage: true}
+      attribute 0x0027, :status_light_enabled, Bool, default: true,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, present_if: :status_light_enabled_supported?
+      attribute 0x0028, :status_light_brightness, ThreeLevelAuto, default: ThreeLevelAuto::Auto,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, present_if: :status_light_brightness_supported?
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
@@ -792,6 +806,31 @@ module Matter
         end
       end
 
+      before_write :status_light_enabled do |enabled|
+        callback = @status_light_enabled_callback
+        if callback
+          status = callback.call(enabled)
+          status unless status.success?
+        else
+          InteractionModel::Status.invalid_in_state
+        end
+      end
+
+      before_write :status_light_brightness do |brightness|
+        if brightness.in?(ThreeLevelAuto::Auto, ThreeLevelAuto::Low,
+             ThreeLevelAuto::Medium, ThreeLevelAuto::High)
+          callback = @status_light_brightness_callback
+          if callback
+            status = callback.call(brightness)
+            status unless status.success?
+          else
+            InteractionModel::Status.invalid_in_state
+          end
+        else
+          InteractionModel::Status.constraint_error
+        end
+      end
+
       before_write :image_flip_horizontal do |value|
         status = admit_image_flip(value, @image_flip_vertical)
         status unless status.success?
@@ -842,6 +881,8 @@ module Matter
       @hdr_mode_callback : Proc(Bool, InteractionModel::Status)?
       @local_video_recording_callback : Proc(Bool, InteractionModel::Status)?
       @local_snapshot_recording_callback : Proc(Bool, InteractionModel::Status)?
+      @status_light_enabled_callback : Proc(Bool, InteractionModel::Status)?
+      @status_light_brightness_callback : Proc(ThreeLevelAuto, InteractionModel::Status)?
       @image_flip_callback : Proc(Bool, Bool, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
@@ -881,6 +922,8 @@ module Matter
                      @speaker_volume_level : UInt8 = 50_u8,
                      @image_flip_horizontal_supported : Bool = false,
                      @image_flip_vertical_supported : Bool = false,
+                     @status_light_enabled_supported : Bool = false,
+                     @status_light_brightness_supported : Bool = false,
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
@@ -1131,6 +1174,30 @@ module Matter
         status = block.call(@local_snapshot_recording_enabled)
         raise ClusterError.new("Local Snapshot Recording host rejected initial setting", status.status) unless status.success?
         @local_snapshot_recording_callback = block
+      end
+
+      def status_light_enabled_supported? : Bool
+        @status_light_enabled_supported
+      end
+
+      def status_light_brightness_supported? : Bool
+        @status_light_brightness_supported
+      end
+
+      # The host applies the persisted state before accepting controller writes.
+      # The two optional status-light attributes can be supported independently.
+      def on_status_light_enabled_changed(&block : Bool -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Status Light Enabled attribute is disabled") unless @status_light_enabled_supported
+        status = block.call(@status_light_enabled)
+        raise ClusterError.new("Status light host rejected initial enabled setting", status.status) unless status.success?
+        @status_light_enabled_callback = block
+      end
+
+      def on_status_light_brightness_changed(&block : ThreeLevelAuto -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Status Light Brightness attribute is disabled") unless @status_light_brightness_supported
+        status = block.call(@status_light_brightness)
+        raise ClusterError.new("Status light host rejected initial brightness setting", status.status) unless status.success?
+        @status_light_brightness_callback = block
       end
 
       def image_flip_horizontal_supported? : Bool

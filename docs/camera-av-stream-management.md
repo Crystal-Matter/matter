@@ -63,6 +63,16 @@ committed. The host rotates output pixels. The synthetic Snapshot Camera
 fixture exercises this profile with official chip-tool attribute reads and
 writes; it does not rotate the checked-in JPEG.
 
+Camera endpoints may independently expose `StatusLightEnabled` and
+`StatusLightBrightness`. Both are nonvolatile, Manage-privileged settings;
+the enabled control defaults to true and brightness uses the Matter global
+Auto/Low/Medium/High enum. Enable each attribute only when the host has the
+corresponding status-light control. Attach `on_status_light_enabled_changed`
+and/or `on_status_light_brightness_changed` after restoring state; the host
+must apply the restored setting before controller writes can change it.
+The synthetic Snapshot Camera exercises both attributes with official
+chip-tool reads and writes.
+
 Hosts may independently opt into `ImageFlipHorizontal` and `ImageFlipVertical`
 with `image_flip_horizontal_supported` and `image_flip_vertical_supported`.
 Both settings require ICTL, use Manage privilege, and persist across restart.

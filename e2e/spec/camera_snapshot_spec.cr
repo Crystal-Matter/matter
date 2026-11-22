@@ -3,6 +3,7 @@ require "./e2e_helper"
 private CAMERA_SNAPSHOT_CLUSTER        = "0x551"
 private CAMERA_SNAPSHOT_ENDPOINT       = "1"
 private SNAPSHOT_CAMERA_DEVICE_TYPE_ID = 0x0145_u32
+private alias CameraLightE2E = Matter::Cluster::CameraAvStreamManagement
 
 private def snapshot_command(device : E2E::Device, command : UInt32, payload : String) : E2E::Result
   device.chip("any", "command-by-id", CAMERA_SNAPSHOT_CLUSTER,
@@ -56,6 +57,20 @@ end
 
 describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
   device = E2E::Device["matter_camera_snapshot"]
+
+  it "exposes optional status light controls to the official controller" do
+    device.commission!
+    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_ENABLED)
+      .bool("StatusLightEnabled").should be_true
+    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
+      .int("StatusLightBrightness").should eq(CameraLightE2E::ThreeLevelAuto::Auto.value.to_i64)
+    expect_success(device.write("cameraavstreammanagement", "status-light-enabled", "false", 1))
+    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_ENABLED)
+      .bool("StatusLightEnabled").should be_false
+    expect_success(device.write("cameraavstreammanagement", "status-light-brightness", "3", 1))
+    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
+      .int("StatusLightBrightness").should eq(CameraLightE2E::ThreeLevelAuto::High.value.to_i64)
+  end
 
   it "exposes optional Image Control flip settings to the official controller" do
     device.commission!

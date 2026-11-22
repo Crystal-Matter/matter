@@ -14,6 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and nonempty non-null SDPMid checks. Verify the receiver with official
   chip-tool.
 
+### Matter 1.6 Camera AV status light controls
+
+- Add independent opt-in StatusLightEnabled and StatusLightBrightness
+  attributes with Manage access, persistence, host admission and official
+  chip-tool read/write coverage.
+
 ### Binding write fabric validation
 
 - Reject Binding wire writes without CASE or authenticated Group context, or
