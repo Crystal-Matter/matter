@@ -3,7 +3,8 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Speaker, Image Control, Watermark, OSD and Local Storage features.
+    # Snapshot, and opt-in Speaker, Image Control, Watermark, OSD, Local Storage
+    # and High Dynamic Range features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -18,6 +19,7 @@ module Matter
       feature :watermark, bit: 6
       feature :osd, bit: 7
       feature :local_storage, bit: 8
+      feature :high_dynamic_range, bit: 9
 
       MIN_STREAM_ID          =      0_u16
       MAX_STREAM_ID          = 65_534_u16
@@ -88,9 +90,16 @@ module Matter
         @[TLV::Field(tag: 2)]
         getter max_fps : UInt16
 
-        def initialize(@sensor_width : UInt16, @sensor_height : UInt16, @max_fps : UInt16)
+        @[TLV::Field(tag: 3, optional: true)]
+        getter max_hdr_fps : UInt16?
+
+        def initialize(@sensor_width : UInt16, @sensor_height : UInt16, @max_fps : UInt16,
+                       @max_hdr_fps : UInt16? = nil)
           raise ArgumentError.new("video sensor must be at least 64 by 64") if @sensor_width < 64 || @sensor_height < 64
           raise ArgumentError.new("video sensor frame rate must be positive") if @max_fps.zero?
+          if hdr_fps = @max_hdr_fps
+            raise ArgumentError.new("HDR frame rate must be within 1..MaxFPS") if hdr_fps.zero? || hdr_fps > @max_fps
+          end
         end
       end
 
@@ -670,6 +679,9 @@ module Matter
       attribute 0x000A, :snapshot_capabilities, Array(SnapshotCapability), computed: true, fixed: true, requires: :snapshot
       attribute 0x000B, :max_network_bandwidth, UInt32, default: 0_u32, fixed: true
       attribute 0x000C, :current_frame_rate, UInt16, default: 0_u16, requires: :video
+      attribute 0x000D, :hdr_mode_enabled, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, requires: :high_dynamic_range
       attribute 0x000E, :supported_stream_usages, Array(StreamUsage), computed: true, fixed: true
       attribute 0x000F, :allocated_video_streams, Array(VideoStream), computed: true, requires: :video
       attribute 0x0010, :allocated_audio_streams, Array(AudioStream), computed: true, requires: :audio
@@ -750,6 +762,16 @@ module Matter
         end
       end
 
+      before_write :hdr_mode_enabled do |enabled|
+        callback = @hdr_mode_callback
+        if callback
+          status = callback.call(enabled)
+          status unless status.success?
+        else
+          InteractionModel::Status.invalid_in_state
+        end
+      end
+
       before_write :local_video_recording_enabled do |enabled|
         callback = @local_video_recording_callback
         if callback
@@ -817,6 +839,7 @@ module Matter
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
+      @hdr_mode_callback : Proc(Bool, InteractionModel::Status)?
       @local_video_recording_callback : Proc(Bool, InteractionModel::Status)?
       @local_snapshot_recording_callback : Proc(Bool, InteractionModel::Status)?
       @image_flip_callback : Proc(Bool, Bool, InteractionModel::Status)?
@@ -861,7 +884,7 @@ module Matter
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd | Feature::LocalStorage).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd | Feature::LocalStorage | Feature::HighDynamicRange).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
         raise ArgumentError.new("Speaker requires Audio") if @feature_map.speaker? && !@feature_map.audio?
@@ -881,6 +904,9 @@ module Matter
         if @feature_map.image_control? && !(@feature_map.snapshot? || @feature_map.video?)
           raise ArgumentError.new("Image Control requires Snapshot or Video")
         end
+        if @feature_map.high_dynamic_range? && !(@feature_map.snapshot? || @feature_map.video?)
+          raise ArgumentError.new("High Dynamic Range requires Snapshot or Video")
+        end
         if (@image_flip_horizontal_supported || @image_flip_vertical_supported) && !@feature_map.image_control?
           raise ArgumentError.new("Image Control flip settings require Image Control")
         end
@@ -893,6 +919,9 @@ module Matter
         @snapshot_capabilities = snapshot_capabilities.dup
         if @feature_map.video?
           sensor = @video_sensor_params || raise ArgumentError.new("Video feature requires sensor parameters")
+          if @feature_map.high_dynamic_range? != !sensor.max_hdr_fps.nil?
+            raise ArgumentError.new("MaxHDRFPS must be present exactly when HDR is advertised with Video")
+          end
           viewport = @min_viewport_resolution || raise ArgumentError.new("Video feature requires viewport resolution")
           raise ArgumentError.new("Video feature requires encoders and pixel rate") if @max_concurrent_encoders.zero? || @max_encoded_pixel_rate.zero?
           raise ArgumentError.new("viewport exceeds sensor") if viewport.width > sensor.sensor_width || viewport.height > sensor.sensor_height
@@ -1077,6 +1106,15 @@ module Matter
         status = block.call(@image_rotation)
         raise ClusterError.new("Image Control host rejected initial rotation", status.status) unless status.success?
         @image_rotation_callback = block
+      end
+
+      # The host applies HDR processing. It must accept the restored setting
+      # before controller writes can change the nonvolatile attribute.
+      def on_hdr_mode_changed(&block : Bool -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("High Dynamic Range feature is disabled") unless @feature_map.high_dynamic_range?
+        status = block.call(@hdr_mode_enabled)
+        raise ClusterError.new("HDR host rejected initial setting", status.status) unless status.success?
+        @hdr_mode_callback = block
       end
 
       # The host owns local recording. Apply restored settings before allowing

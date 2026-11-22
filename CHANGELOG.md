@@ -14,6 +14,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and nonempty non-null SDPMid checks. Verify the receiver with official
   chip-tool.
 
+### Matter 1.6 Camera AV High Dynamic Range controls
+
+- Add the optional HDR feature, its VDO-only MaxHDRFPS sensor field and
+  mandatory persistent HDRModeEnabled setting, with host admission before writes.
+
 ### Matter 1.6 Camera AV Settings DPTZ stream lifecycle
 
 - Track newly allocated video streams in DPTZStreams automatically, including
