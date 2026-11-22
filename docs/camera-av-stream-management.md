@@ -131,6 +131,15 @@ resources must be reopened explicitly. The next video stream ID persists, avoidi
 reuse of a pre-restart ID. SNP allocations are retained and require host callback
 rebinding.
 
+ADO hosts that implement automatic gain control can opt into
+`MicrophoneAGCEnabled` with `microphone_agc_supported: true`. The optional
+attribute defaults to enabled, has Manage read/write access, and persists.
+Register `on_microphone_agc_changed` after restoring state. It applies the
+restored value immediately and admits each later controller write before the
+attribute commits; without a registered host callback, writes return
+`InvalidInState`. The synthetic Audio Doorbell acknowledges logical AGC
+changes; a production host must apply the setting to its microphone pipeline.
+
 The [synthetic audio example](../examples/matter_camera_audio_device.cr)
 advertises Audio Doorbell `0x0141` revision 2 with required Identify, Switch,
 Camera AV ADO, WebRTC Provider, Requestor client, Chime client, and Root Power

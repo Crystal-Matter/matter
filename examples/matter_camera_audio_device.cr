@@ -68,6 +68,7 @@ module MatterCameraAudio
         supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
         max_content_buffer_size: 65_536_u32,
         max_network_bandwidth: 96_000_u32,
+        microphone_agc_supported: true,
         feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Privacy | CameraAv::Feature::Speaker
       client_cluster Requestor::CLUSTER_ID
       client_cluster Chime::CLUSTER_ID
@@ -91,6 +92,9 @@ module MatterCameraAudio
         Matter::InteractionModel::Status.success
       end
       camera.on_speaker_settings_changed do |_muted, _volume|
+        Matter::InteractionModel::Status.success
+      end
+      camera.on_microphone_agc_changed do |_enabled|
         Matter::InteractionModel::Status.success
       end
       super

@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera AV microphone AGC
+
+- Add the optional ADO MicrophoneAGCEnabled attribute with a default-on,
+  nonvolatile Manage setting. Hosts opt in and admit changes before writes
+  commit; the synthetic Audio Doorbell has official chip-tool read/write and
+  restart coverage.
+
 ### Matter 1.6 Camera AV status light controls
 
 - Add independent opt-in StatusLightEnabled and StatusLightBrightness
