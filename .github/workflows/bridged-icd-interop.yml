@@ -1,0 +1,25 @@
+name: Bridged ICD KeepActive interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/bridged-icd-interop.yml'
+      - 'e2e/fixture/matter_bridged_icd_device.cr'
+      - 'e2e/spec/bridged_icd_spec.cr'
+
+jobs:
+  official-chip-tool-bridged-icd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify bridged ICD KeepActive with official chip-tool
+        run: ./test --focused --service bridged-icd -- e2e/spec/bridged_icd_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridged-icd-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn
