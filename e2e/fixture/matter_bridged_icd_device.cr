@@ -51,7 +51,10 @@ module MatterBridgedIcdFixture
           info = node.get_cluster!(1_u16, BridgedInfo)
           promised = info.bridged_device_became_active
           File.delete(path)
-          File.write("#{path}.ack", promised ? promised.to_s : "none")
+          # The spec waits for the ack path; publish it only after the value is complete.
+          ack = "#{path}.ack"
+          File.write("#{ack}.tmp", promised ? promised.to_s : "none")
+          File.rename("#{ack}.tmp", ack)
         end
         sleep 100.milliseconds
       end
