@@ -42,6 +42,8 @@ module MatterCameraSnapshot
         max_encoded_pixel_rate: 3_072_000_u32,
         image_flip_horizontal_supported: true,
         image_flip_vertical_supported: true,
+        status_light_enabled_supported: true,
+        status_light_brightness_supported: true,
         feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy |
                      CameraAv::Feature::ImageControl
     end
@@ -56,6 +58,8 @@ module MatterCameraSnapshot
       end
       camera.on_image_rotation_changed { |_angle| Matter::InteractionModel::Status.success }
       camera.on_image_flip_changed { |_horizontal, _vertical| Matter::InteractionModel::Status.success }
+      camera.on_status_light_enabled_changed { |_enabled| Matter::InteractionModel::Status.success }
+      camera.on_status_light_brightness_changed { |_brightness| Matter::InteractionModel::Status.success }
       super
     end
   end

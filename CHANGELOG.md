@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera AV status light controls
+
+- Add independent opt-in StatusLightEnabled and StatusLightBrightness
+  attributes with Manage access, persistence, host admission and official
+  chip-tool read/write coverage.
+
 ### Matter 1.6 Camera AV High Dynamic Range controls
 
 - Add the optional HDR feature, its VDO-only MaxHDRFPS sensor field and
