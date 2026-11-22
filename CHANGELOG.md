@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera AV Night Vision
+
+- Add opt-in NV for VDO/SNP with fixed infrared capability, persistent
+  Manage-privileged NightVision, and independently optional NightVisionIllum.
+  Host callbacks admit mode changes before commit; the synthetic Snapshot
+  Camera verifies both settings with official chip-tool across restart.
+
 ### Matter 1.6 Camera AV microphone AGC
 
 - Add the optional ADO MicrophoneAGCEnabled attribute with a default-on,

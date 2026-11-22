@@ -44,8 +44,10 @@ module MatterCameraSnapshot
         image_flip_vertical_supported: true,
         status_light_enabled_supported: true,
         status_light_brightness_supported: true,
+        night_vision_uses_infrared: true,
+        night_vision_illum_supported: true,
         feature_map: CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy |
-                     CameraAv::Feature::ImageControl
+                     CameraAv::Feature::ImageControl | CameraAv::Feature::NightVision
     end
 
     protected def before_start : Nil
@@ -60,6 +62,8 @@ module MatterCameraSnapshot
       camera.on_image_flip_changed { |_horizontal, _vertical| Matter::InteractionModel::Status.success }
       camera.on_status_light_enabled_changed { |_enabled| Matter::InteractionModel::Status.success }
       camera.on_status_light_brightness_changed { |_brightness| Matter::InteractionModel::Status.success }
+      camera.on_night_vision_changed { |_mode| Matter::InteractionModel::Status.success }
+      camera.on_night_vision_illum_changed { |_mode| Matter::InteractionModel::Status.success }
       super
     end
   end
