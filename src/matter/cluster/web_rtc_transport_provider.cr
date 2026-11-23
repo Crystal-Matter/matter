@@ -625,7 +625,7 @@ module Matter
       end
 
       private def valid_ice_server?(server : IceServer) : Bool
-        return false if server.urls.empty? || server.urls.size > MAX_ICE_SERVERS
+        return false if server.urls.size > MAX_ICE_SERVERS
         return false unless server.urls.all? do |url|
                               url.bytesize <= MAX_ICE_URL_LENGTH &&
                               ["stun:", "stuns:", "turn:", "turns:"].any? { |scheme| url.starts_with?(scheme) }
