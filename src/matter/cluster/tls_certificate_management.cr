@@ -1,5 +1,6 @@
 require "./cluster"
 require "./tls_certificate_management/types"
+require "../fabric"
 require "../crypto/key"
 require "../crypto/crypto"
 require "../crypto/pkcs10"
@@ -82,6 +83,16 @@ module Matter
       @clients = [] of ClientRecord
       @next_caid = {} of UInt8 => UInt16
       @next_ccdid = {} of UInt8 => UInt16
+
+      # Every command is fabric-scoped. Check the CASE fabric before command
+      # hooks, decoding, or any handler can allocate keys or change state.
+      def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
+                         is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        if get_command_metadata(command_id)
+          return InteractionModel::Status.unsupported_access unless is_case_session && valid_fabric_index?(fabric_index)
+        end
+        super
+      end
 
       # Device installs these before restoring state. The persistence callback
       # writes synchronously because an acknowledged CSR must survive restart.
@@ -298,9 +309,14 @@ module Matter
 
       private def accessing_fabric : UInt8 | InteractionModel::Status
         fabric = request_fabric_index
-        return InteractionModel::Status.unsupported_access unless fabric && request_is_case_session?
+        return InteractionModel::Status.unsupported_access unless request_is_case_session? && valid_fabric_index?(fabric)
+        fabric = fabric.not_nil!
         return InteractionModel::Status.unsupported_access unless installed?(fabric)
         fabric
+      end
+
+      private def valid_fabric_index?(fabric : UInt8?) : Bool
+        !!(fabric && Fabric::MIN_FABRIC_INDEX <= fabric <= Fabric::MAX_FABRIC_INDEX)
       end
 
       private def visible(records : Array(T), fabric : UInt8) : Array(T) forall T

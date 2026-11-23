@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 TLS Certificate Management fabric validation
+
+- Reject reserved fabric indexes on all nine fabric-scoped certificate commands
+  before command hooks, CSR key generation, or state and persistence changes.
+
 ### Matter 1.6 Account Login fabric validation
 
 - Reject reserved fabric indexes for all Account Login wire commands before
