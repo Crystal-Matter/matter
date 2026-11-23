@@ -12,6 +12,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject reserved fabric indexes on all nine fabric-scoped certificate commands
   before command hooks, CSR key generation, or state and persistence changes.
 
+### Matter 1.6 Camera AV Night Vision
+
+- Add opt-in NV for VDO/SNP with fixed infrared capability, persistent
+  Manage-privileged NightVision, and independently optional NightVisionIllum.
+  Host callbacks admit mode changes before commit; the synthetic Snapshot
+  Camera verifies both settings with official chip-tool across restart.
+
 ### Matter 1.6 Account Login fabric validation
 
 - Reject reserved fabric indexes for all Account Login wire commands before
