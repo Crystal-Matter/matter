@@ -60,4 +60,19 @@ describe "TLS Certificate Management fabric-scoped commands" do
         is_case_session: true, fabric_index: valid_fabric), FabricTlsStatus::NotFound)
     end
   end
+
+  [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |invalid_fabric|
+    it "rejects a direct CSR call on reserved fabric #{invalid_fabric}" do
+      cluster = build(FabricTlsCert)
+      cluster.request_is_case_session = true
+      cluster.request_fabric_index = invalid_fabric
+      before_state = cluster.save_state
+
+      result = cluster.client_csr(FabricTlsCert::Tlv::ClientCsrRequest.new(
+        Bytes.new(FabricTlsCert::NONCE_BYTES, 1_u8), nil))
+
+      result.as(Matter::InteractionModel::Status).status.should eq(FabricTlsStatus::UnsupportedAccess)
+      cluster.save_state.should eq(before_state)
+    end
+  end
 end
