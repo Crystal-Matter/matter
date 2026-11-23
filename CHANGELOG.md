@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Groupcast fabric validation
+
+- Reject reserved fabric indexes in Groupcast commands before changing
+  membership or testing state, even when the request claims a CASE session.
+
 ### Matter 1.6 WebRTC Provider ICE server URLs
 
 - Accept an ICE server with an empty URLs list in ProvideOffer, as allowed by
