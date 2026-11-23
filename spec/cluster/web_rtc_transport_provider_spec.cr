@@ -113,6 +113,18 @@ private def read_provider_sessions(provider : Provider, acl : ProviderAcl,
 end
 
 describe Provider do
+  it "accepts an ICE server with an empty URLs list" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    server = Provider::IceServer.new([] of String)
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [audio_id], ice_servers: [server])
+
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse)
+    peer.offers.should eq(["v=0"])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+  end
+
   it "honors FabricFiltered for authenticated two-fabric CurrentSessions reads" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     acl = ProviderAcl.new(endpoint(0))
