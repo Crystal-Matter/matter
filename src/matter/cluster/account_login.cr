@@ -1,4 +1,5 @@
 require "digest/sha256"
+require "../fabric"
 require "./cluster"
 
 module Matter
@@ -101,6 +102,16 @@ module Matter
       @attempts = {} of String => Time
       @rate_mutex = Mutex.new
 
+      # All three commands are fabric-scoped. Reject reserved fabric context
+      # before Base invokes command hooks or dispatches the request.
+      def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
+                         is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        if command_id == CMD_GET_SETUP_PIN || command_id == CMD_LOGIN || command_id == CMD_LOGOUT
+          return InteractionModel::Status.unsupported_access unless is_case_session && valid_fabric_index?(fabric_index)
+        end
+        super
+      end
+
       def initialize(endpoint_id : DataType::EndpointNumber, @host : Host,
                      @clock : Proc(Time) = -> { Time.utc })
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
@@ -139,7 +150,7 @@ module Matter
       # Hosts call this when a user logs out locally. The event is visible only
       # to administrators on the affected fabric.
       def notify_logged_out(node : UInt64?, fabric_index : UInt8) : Nil
-        raise ArgumentError.new("fabric index must be nonzero") if fabric_index == DataType::NO_FABRIC
+        raise ArgumentError.new("fabric index must be valid") unless valid_fabric_index?(fabric_index)
         emit_logged_out(LoggedOutEvent.new(node), fabric_index)
       end
 
@@ -160,7 +171,12 @@ module Matter
 
       private def command_fabric_index : UInt8?
         return unless request_is_case_session?
-        request_fabric_index
+        fabric_index = request_fabric_index
+        fabric_index if valid_fabric_index?(fabric_index)
+      end
+
+      private def valid_fabric_index?(fabric_index : UInt8?) : Bool
+        !!(fabric_index && Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX)
       end
 
       private def validate_identifier!(identifier : String) : Nil
