@@ -14,6 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Host callbacks admit mode changes before commit; the synthetic Snapshot
   Camera verifies both settings with official chip-tool across restart.
 
+### Matter 1.6 Account Login fabric validation
+
+- Reject reserved fabric indexes for all Account Login wire commands before
+  command hooks, host callbacks, rate limiting, and LoggedOut events. Reject
+  host-initiated LoggedOut events for those indexes as well.
+
 ### Matter 1.6 Camera AV microphone AGC
 
 - Add the optional ADO MicrophoneAGCEnabled attribute with a default-on,
