@@ -24,6 +24,19 @@ private def sender_cluster(features : SenderGC::Feature)
 end
 
 describe "Matter 1.6 Groupcast Sender" do
+  it "rejects reserved CASE fabric indexes before enabling Groupcast testing" do
+    sender, _keys, _acl = sender_cluster(SenderGC::Feature::Sender)
+    [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric|
+      sender.request_fabric_index = fabric
+      error = expect_raises(Matter::ClusterError) do
+        sender.groupcast_testing(SenderGC::GroupcastTestingRequest.new(
+          SenderGC::GroupcastTestingEnum::EnableSenderTesting, 10_u16))
+      end
+      error.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+      sender.fabric_under_test.should eq(Matter::DataType::NO_FABRIC)
+    end
+  end
+
   it "reports AlreadyExists when a supplied key reuses an installed KeySetID" do
     sender, keys, _acl = sender_cluster(SenderGC::Feature::Sender)
     first_key = Bytes.new(16, 0xAA_u8)
