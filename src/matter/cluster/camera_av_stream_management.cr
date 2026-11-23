@@ -3,8 +3,8 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Speaker, Image Control, Watermark, OSD, Local Storage
-    # and High Dynamic Range features.
+    # Snapshot, and opt-in Speaker, Image Control, Watermark, OSD, Local Storage,
+    # High Dynamic Range and Night Vision features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -20,6 +20,7 @@ module Matter
       feature :osd, bit: 7
       feature :local_storage, bit: 8
       feature :high_dynamic_range, bit: 9
+      feature :night_vision, bit: 10
 
       MIN_STREAM_ID          =      0_u16
       MAX_STREAM_ID          = 65_534_u16
@@ -69,6 +70,12 @@ module Matter
         Low    = 1
         Medium = 2
         High   = 3
+      end
+
+      enum TriStateAuto : UInt8
+        Off  = 0
+        On   = 1
+        Auto = 2
       end
 
       struct VideoResolution
@@ -678,6 +685,8 @@ module Matter
       attribute 0x0000, :max_concurrent_encoders, UInt8, default: 0_u8, fixed: true, present_if: :video_or_snapshot?
       attribute 0x0001, :max_encoded_pixel_rate, UInt32, default: 0_u32, fixed: true, present_if: :video_or_snapshot?
       attribute 0x0002, :video_sensor_params, VideoSensorParams, computed: true, fixed: true, requires: :video
+      attribute 0x0003, :night_vision_uses_infrared, Bool, default: false,
+        fixed: true, requires: :night_vision
       attribute 0x0004, :min_viewport_resolution, VideoResolution, computed: true, fixed: true, requires: :video
       attribute 0x0005, :rate_distortion_trade_off_points, Array(RateDistortionPoint), computed: true, fixed: true, requires: :video
       attribute 0x0006, :max_content_buffer_size, UInt32, default: 0_u32, fixed: true
@@ -700,6 +709,13 @@ module Matter
       attribute 0x0014, :soft_livestream_privacy_mode_enabled, Bool, default: false,
         writable: true, write_access: :operate, persist: true, requires: :privacy, on_change: :notify_privacy
       attribute 0x0015, :hard_privacy_mode_on, Bool, default: false, on_change: :notify_privacy
+      attribute 0x0016, :night_vision, TriStateAuto, default: TriStateAuto::Off,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, requires: :night_vision
+      attribute 0x0017, :night_vision_illum, TriStateAuto, default: TriStateAuto::Off,
+        writable: true, read_access: :manage, write_access: :manage,
+        persist: true, optional: true, requires: :night_vision,
+        present_if: :night_vision_illum_supported?
       attribute 0x0018, :viewport, Viewport, computed: true, writable: true,
         read_access: :manage, write_access: :manage, requires: :video
       attribute 0x0019, :speaker_muted, Bool, default: false,
@@ -755,6 +771,34 @@ module Matter
           status unless status.success?
         else
           InteractionModel::Status.invalid_in_state
+        end
+      end
+
+      before_write :night_vision do |mode|
+        if mode.in?(TriStateAuto::Off, TriStateAuto::On, TriStateAuto::Auto)
+          callback = @night_vision_callback
+          if callback
+            status = callback.call(mode)
+            status unless status.success?
+          else
+            InteractionModel::Status.invalid_in_state
+          end
+        else
+          InteractionModel::Status.constraint_error
+        end
+      end
+
+      before_write :night_vision_illum do |mode|
+        if mode.in?(TriStateAuto::Off, TriStateAuto::On, TriStateAuto::Auto)
+          callback = @night_vision_illum_callback
+          if callback
+            status = callback.call(mode)
+            status unless status.success?
+          else
+            InteractionModel::Status.invalid_in_state
+          end
+        else
+          InteractionModel::Status.constraint_error
         end
       end
 
@@ -891,6 +935,8 @@ module Matter
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @microphone_agc_callback : Proc(Bool, InteractionModel::Status)?
+      @night_vision_callback : Proc(TriStateAuto, InteractionModel::Status)?
+      @night_vision_illum_callback : Proc(TriStateAuto, InteractionModel::Status)?
       @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @image_rotation_callback : Proc(UInt16, InteractionModel::Status)?
       @hdr_mode_callback : Proc(Bool, InteractionModel::Status)?
@@ -931,6 +977,8 @@ module Matter
                      @microphone_max_level : UInt8 = 100_u8,
                      @microphone_volume_level : UInt8 = 50_u8,
                      @microphone_agc_supported : Bool = false,
+                     @night_vision_uses_infrared : Bool = false,
+                     @night_vision_illum_supported : Bool = false,
                      @speaker_capabilities : AudioCapabilities? = nil,
                      @two_way_talk_support : TwoWayTalkSupport? = nil,
                      @speaker_min_level : UInt8 = 0_u8,
@@ -943,7 +991,7 @@ module Matter
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd | Feature::LocalStorage | Feature::HighDynamicRange).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::ImageControl | Feature::Watermark | Feature::Osd | Feature::LocalStorage | Feature::HighDynamicRange | Feature::NightVision).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
         raise ArgumentError.new("Speaker requires Audio") if @feature_map.speaker? && !@feature_map.audio?
@@ -965,6 +1013,12 @@ module Matter
         end
         if @feature_map.high_dynamic_range? && !(@feature_map.snapshot? || @feature_map.video?)
           raise ArgumentError.new("High Dynamic Range requires Snapshot or Video")
+        end
+        if @feature_map.night_vision? && !(@feature_map.snapshot? || @feature_map.video?)
+          raise ArgumentError.new("Night Vision requires Video or Snapshot")
+        end
+        if (@night_vision_uses_infrared || @night_vision_illum_supported) && !@feature_map.night_vision?
+          raise ArgumentError.new("Night Vision settings require Night Vision")
         end
         if (@image_flip_horizontal_supported || @image_flip_vertical_supported) && !@feature_map.image_control?
           raise ArgumentError.new("Image Control flip settings require Image Control")
@@ -1161,6 +1215,25 @@ module Matter
         status = block.call(@microphone_agc_enabled)
         raise ClusterError.new("Microphone AGC host rejected initial setting", status.status) unless status.success?
         @microphone_agc_callback = block
+      end
+
+      def night_vision_illum_supported? : Bool
+        @night_vision_illum_supported
+      end
+
+      # The host applies the restored night-vision mode before accepting writes.
+      def on_night_vision_changed(&block : TriStateAuto -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Night Vision feature is disabled") unless @feature_map.night_vision?
+        status = block.call(@night_vision)
+        raise ClusterError.new("Night Vision host rejected initial mode", status.status) unless status.success?
+        @night_vision_callback = block
+      end
+
+      def on_night_vision_illum_changed(&block : TriStateAuto -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Night Vision illumination is disabled") unless @night_vision_illum_supported
+        status = block.call(@night_vision_illum)
+        raise ClusterError.new("Night Vision host rejected initial illumination", status.status) unless status.success?
+        @night_vision_illum_callback = block
       end
 
       # Apply the restored state before accepting controller writes. The host
