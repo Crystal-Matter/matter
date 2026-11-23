@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider ICE server URLs
+
+- Accept an ICE server with an empty URLs list in ProvideOffer, as allowed by
+  the Matter 1.6 data model, and forward it to the host media peer. Verify the
+  wire command with official chip-tool.
+
 ### Matter 1.6 Account Login fabric validation
 
 - Reject reserved fabric indexes for all Account Login wire commands before
