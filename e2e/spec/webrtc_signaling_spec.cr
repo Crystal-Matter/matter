@@ -29,7 +29,7 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       device.node, WEBRTC_ENDPOINT)
     expect_success(allocated)
 
-    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","6":[{"0":[]}],"11":["u:0"]})
     expect_success(webrtc_command(device, 0x02_u32, offer))
     expect_failure(webrtc_command(device, 0x02_u32,
       %({"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})), "INVALID_COMMAND")

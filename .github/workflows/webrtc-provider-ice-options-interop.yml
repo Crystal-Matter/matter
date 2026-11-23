@@ -1,0 +1,26 @@
+name: WebRTC Provider ICE options interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/webrtc-provider-ice-options-interop.yml'
+      - 'e2e/spec/webrtc_signaling_spec.cr'
+      - 'examples/matter_webrtc_signaling_device.cr'
+      - 'src/matter/cluster/web_rtc_transport_provider.cr'
+
+jobs:
+  official-chip-tool-webrtc-provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify ICE options with official chip-tool
+        run: ./test --focused --service webrtc-signaling -- e2e/spec/webrtc_signaling_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-provider-ice-logs
+          path: tmp/e2e/logs/*.log
+          if-no-files-found: warn
