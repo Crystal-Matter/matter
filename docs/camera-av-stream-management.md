@@ -44,6 +44,17 @@ controller writes can change it, and a rejected write leaves the reported
 setting unchanged. The host owns HDR image processing and enforces its sensor
 frame-rate limit while HDR is enabled.
 
+The optional Night Vision (`NV`) feature also requires VDO or SNP. Hosts
+advertise a fixed `NightVisionUsesInfrared` capability and a nonvolatile,
+Manage-writable `NightVision` mode (`Off`, `On`, or `Auto`).
+`NightVisionIllum` uses the same modes and can be enabled independently when
+the host controls illumination. Attach `on_night_vision_changed` and, if
+supported, `on_night_vision_illum_changed` after restoring state. Each callback
+applies the restored mode before controller writes and can reject a requested
+mode before it commits. The synthetic Snapshot Camera exercises these wire
+settings; production hosts must change their actual image and illumination
+processing.
+
 The optional Local Storage (`STOR`) feature exposes nonvolatile,
 Manage-privileged recording controls when combined with VDO or SNP:
 `LocalVideoRecordingEnabled` for VDO+STOR and

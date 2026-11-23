@@ -3,7 +3,7 @@ require "./e2e_helper"
 private CAMERA_SNAPSHOT_CLUSTER        = "0x551"
 private CAMERA_SNAPSHOT_ENDPOINT       = "1"
 private SNAPSHOT_CAMERA_DEVICE_TYPE_ID = 0x0145_u32
-private alias CameraLightE2E = Matter::Cluster::CameraAvStreamManagement
+private alias CameraSnapshotE2E = Matter::Cluster::CameraAvStreamManagement
 
 private def snapshot_command(device : E2E::Device, command : UInt32, payload : String) : E2E::Result
   device.chip("any", "command-by-id", CAMERA_SNAPSHOT_CLUSTER,
@@ -60,16 +60,33 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
 
   it "exposes optional status light controls to the official controller" do
     device.commission!
-    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_ENABLED)
+    snapshot_read(device, CameraSnapshotE2E::ATTR_STATUS_LIGHT_ENABLED)
       .bool("StatusLightEnabled").should be_true
-    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
-      .int("StatusLightBrightness").should eq(CameraLightE2E::ThreeLevelAuto::Auto.value.to_i64)
+    snapshot_read(device, CameraSnapshotE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
+      .int("StatusLightBrightness").should eq(CameraSnapshotE2E::ThreeLevelAuto::Auto.value.to_i64)
     expect_success(device.write("cameraavstreammanagement", "status-light-enabled", "false", 1))
-    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_ENABLED)
+    snapshot_read(device, CameraSnapshotE2E::ATTR_STATUS_LIGHT_ENABLED)
       .bool("StatusLightEnabled").should be_false
     expect_success(device.write("cameraavstreammanagement", "status-light-brightness", "3", 1))
-    snapshot_read(device, CameraLightE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
-      .int("StatusLightBrightness").should eq(CameraLightE2E::ThreeLevelAuto::High.value.to_i64)
+    snapshot_read(device, CameraSnapshotE2E::ATTR_STATUS_LIGHT_BRIGHTNESS)
+      .int("StatusLightBrightness").should eq(CameraSnapshotE2E::ThreeLevelAuto::High.value.to_i64)
+  end
+
+  it "writes Night Vision mode and optional illumination with official chip-tool" do
+    device.commission!
+    snapshot_read(device, CameraSnapshotE2E::ATTR_NIGHT_VISION_USES_INFRARED)
+      .bool("NightVisionUsesInfrared").should be_true
+    snapshot_read(device, CameraSnapshotE2E::ATTR_NIGHT_VISION)
+      .int("NightVision").should eq(CameraSnapshotE2E::TriStateAuto::Off.value.to_i64)
+    expect_success(device.write("cameraavstreammanagement", "night-vision", "2", 1))
+    expect_success(device.write("cameraavstreammanagement", "night-vision-illum", "1", 1))
+    device.restart!
+    snapshot_read(device, CameraSnapshotE2E::ATTR_NIGHT_VISION)
+      .int("NightVision").should eq(CameraSnapshotE2E::TriStateAuto::Auto.value.to_i64)
+    snapshot_read(device, CameraSnapshotE2E::ATTR_NIGHT_VISION_ILLUM)
+      .int("NightVisionIllum").should eq(CameraSnapshotE2E::TriStateAuto::On.value.to_i64)
+    expect_success(device.write("cameraavstreammanagement", "night-vision", "0", 1))
+    expect_success(device.write("cameraavstreammanagement", "night-vision-illum", "0", 1))
   end
 
   it "exposes optional Image Control flip settings to the official controller" do
@@ -116,7 +133,9 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
     (time_features & Matter::Cluster::TimeSynchronization::Feature::TimeZone.value.to_i64)
       .should eq(Matter::Cluster::TimeSynchronization::Feature::TimeZone.value.to_i64)
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x0551_i64)
-    snapshot_read(device, 0xFFFC_u32).output.should contain("12") # SNP + PRIV
+    read_int(device, "cameraavstreammanagement", "feature-map", "FeatureMap", 1).should eq(
+      (CameraSnapshotE2E::Feature::Snapshot | CameraSnapshotE2E::Feature::Privacy |
+       CameraSnapshotE2E::Feature::ImageControl | CameraSnapshotE2E::Feature::NightVision).value.to_i64)
     snapshot_read(device, 0x000A_u32).output.should contain("640")
     snapshot_read(device, 0x0011_u32)
     payload = %({"0":"u:0","1":"u:5","2":{"0":"u:320","1":"u:240"},"3":{"0":"u:640","1":"u:480"},"4":"u:80"})
