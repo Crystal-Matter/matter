@@ -309,8 +309,7 @@ module Matter
 
       private def accessing_fabric : UInt8 | InteractionModel::Status
         fabric = request_fabric_index
-        return InteractionModel::Status.unsupported_access unless request_is_case_session? && valid_fabric_index?(fabric)
-        fabric = fabric.not_nil!
+        return InteractionModel::Status.unsupported_access unless fabric && request_is_case_session? && valid_fabric_index?(fabric)
         return InteractionModel::Status.unsupported_access unless installed?(fabric)
         fabric
       end
