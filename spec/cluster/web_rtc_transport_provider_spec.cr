@@ -54,7 +54,7 @@ private def web_rtc_fixture
   capabilities = CameraAv::AudioCapabilities.new(1_u8, [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8])
   camera = build(CameraAv, microphone_capabilities: capabilities,
     supported_stream_usages: [CameraAv::StreamUsage::LiveView],
-    max_content_buffer_size: 65_536_u32, max_network_bandwidth: 128_000_u32)
+    max_content_buffer_size: 65_536_u32, max_network_bandwidth: 256_000_u32)
   camera.on_audio_allocate { |_request, _id| Status.success }
   camera.on_audio_deallocate { |_id| Status.success }
   stream = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
