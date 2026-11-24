@@ -475,10 +475,11 @@ module Matter
       end
 
       private def accessing_fabric : UInt8
-        unless request_is_case_session? && (fabric = request_fabric_index)
-          raise Matter::ClusterError.new("Groupcast commands require CASE", InteractionModel::StatusCode::UnsupportedAccess)
+        if fabric = request_fabric_index
+          return fabric if request_is_case_session? &&
+                           (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric)
         end
-        fabric
+        raise Matter::ClusterError.new("Groupcast commands require CASE", InteractionModel::StatusCode::UnsupportedAccess)
       end
 
       private def administering?(fabric : UInt8) : Bool

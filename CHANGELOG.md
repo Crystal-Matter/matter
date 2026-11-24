@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Groupcast fabric validation
+
+- Reject reserved fabric indexes in Groupcast commands before changing
+  membership or testing state, even when the request claims a CASE session.
+
 ### Matter 1.6 TLS Certificate Management fabric validation
 
 - Reject reserved fabric indexes on all nine fabric-scoped certificate commands
