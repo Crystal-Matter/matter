@@ -10,6 +10,7 @@ module MatterWebRtcSignaling
 
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
   alias Provider = Matter::Cluster::WebRtcTransportProvider
+  alias TimeSync = Matter::Cluster::TimeSynchronization
   alias Status = Matter::InteractionModel::Status
 
   class RecordingPeer < Provider::Peer
@@ -44,6 +45,10 @@ module MatterWebRtcSignaling
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_webrtc_signaling_storage.yml"
+
+    endpoint 0_u16, device_type: Matter::DeviceType::ROOT_NODE do
+      cluster TimeSync
+    end
 
     endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster CameraAv,
