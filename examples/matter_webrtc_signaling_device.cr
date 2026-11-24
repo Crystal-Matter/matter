@@ -71,7 +71,8 @@ module MatterWebRtcSignaling
     protected def device_clusters : Array(Matter::Cluster::Base)
       clusters = super
       camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
-      clusters << Provider.new(camera.endpoint_id, camera, RecordingPeer.new)
+      time_sync = clusters.find(&.is_a?(TimeSync)).as(TimeSync)
+      clusters << Provider.new(camera.endpoint_id, camera, RecordingPeer.new, time_sync)
       clusters
     end
 
