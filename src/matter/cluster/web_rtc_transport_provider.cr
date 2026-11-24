@@ -384,10 +384,33 @@ module Matter
           return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
           return InteractionModel::Status.constraint_error if (usage = request.stream_usage) && usage != session.stream_usage
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
-          return InteractionModel::Status.constraint_error if request.audio_streams || !request.audio_stream_id_state.absent? ||
-                                                              request.video_streams || !request.video_stream_id_state.absent?
-          status = peer_status { @peer.accept_offer(session, request) }
+          # On a re-offer, a legacy null ID clears that stream assignment;
+          # automatic stream selection applies only when creating a session.
+          audio_id = request.audio_stream_id_state.value! if request.audio_stream_id_state.value?
+          video_id = request.video_stream_id_state.value! if request.video_stream_id_state.value?
+          audio = if request.audio_streams || !request.audio_stream_id_state.absent?
+                    selected_audio(request.audio_streams, audio_id)
+                  else
+                    session.audio_streams
+                  end
+          video = if request.video_streams || !request.video_stream_id_state.absent?
+                    selected_video(request.video_streams, video_id)
+                  else
+                    session.video_streams
+                  end
+          return InteractionModel::Status.constraint_error unless valid_streams?(audio, nil, video, nil, session.stream_usage)
+          return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, session.stream_usage)
+          revised = Session.new(id, node, session.peer_endpoint_id, session.stream_usage, audio, video, fabric)
+          status = peer_status { @peer.accept_offer(revised, request) }
           return status unless status.success?
+          if index = @sessions.index(session)
+            if session.audio_streams != audio || session.video_streams != video
+              @sessions[index] = revised
+              changed
+            end
+          else
+            return InteractionModel::Status.not_found
+          end
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
           schedule_offer_timeout
           return ProvideOfferResponse.new(id, request.audio_stream_id_state, request.video_stream_id_state)
