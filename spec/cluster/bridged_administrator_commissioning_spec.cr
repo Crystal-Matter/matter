@@ -52,6 +52,28 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
     calls.should eq(0)
   end
 
+  it "rejects reserved caller fabric indexes before forwarding timed commands" do
+    calls = 0
+    cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
+      target_fabric_index: Matter::Fabric::MIN_FABRIC_INDEX, target_node_id: Matter::DataType::NodeId::OPERATIONAL_MINIMUM,
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { calls += 1; Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { calls += 1; Status.success })
+    cluster.request_peer_node_id = Matter::DataType::NodeId::OPERATIONAL_MINIMUM
+    request = RootAdmin::OpenCommissioningWindowRequest.new(
+      RootAdmin::MINIMUM_COMMISSIONING_TIMEOUT,
+      Bytes.new(RootAdmin::PAKE_PASSCODE_VERIFIER_LENGTH),
+      3840_u16, RootAdmin::PBKDF2_MIN_ITERATIONS.to_u32,
+      Bytes.new(RootAdmin::PAKE_SALT_MIN_LENGTH))
+
+    [Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric|
+      cluster.invoke_command(Admin::CMD_OPEN_COMMISSIONING_WINDOW, request.to_tlv(nil),
+        is_case_session: true, fabric_index: fabric).should eq(Status.unsupported_access)
+      cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING,
+        is_case_session: true, fabric_index: fabric).should eq(Status.unsupported_access)
+    end
+    calls.should eq(0)
+  end
+
   it "publishes only host supplied remote window state" do
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
