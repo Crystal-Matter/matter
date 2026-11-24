@@ -85,7 +85,9 @@ module Matter
       end
 
       private def authenticated_caller_fabric : UInt8?
-        request_fabric_index if request_is_case_session?
+        return unless request_is_case_session?
+        fabric = request_fabric_index
+        fabric if fabric && (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric)
       end
     end
   end

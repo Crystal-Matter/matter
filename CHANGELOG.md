@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 bridged commissioning caller validation
+
+- Reject reserved caller fabric indexes on the bridged Administrator
+  Commissioning timed commands before host forwarding callbacks run.
+
 ### Matter 1.6 Groupcast fabric validation
 
 - Reject reserved fabric indexes in Groupcast commands before changing
