@@ -5,6 +5,7 @@ require "../interop/jfa_vvs_dcl_fixture"
 
 private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
 private alias JfaRollout = Matter::Controller::IpkRollout
+private alias JfNodeRemoval = Matter::Controller::JointFabricNodeRemoval
 MIGRATION_RECOVERY_MIN_WAIT       = 120.seconds
 MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.remove_fabric_response")
@@ -3246,15 +3247,39 @@ describe "three provisioned Joint Fabric Administrators" do
         root_public_key: sdk_survivor.root_public_key)
       sleep 1.second
       read_two_jfa_on_off(anchor_im, sdk_anchor_session, sdk_recipient).should be_true
+      # Remove the migrated independent node through the production
+      # Core §11.24.4.2 workflow while its keyed membership is still live.
+      # It must retire the target membership and key before RemoveNode.
+      sdk_node = jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID)
+        .find!(&.node_id.==(SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_removal_fabric = joiner_store.load.fabric_for(anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_public_key, 0xA103_u64)
+      sdk_removal_port = JfNodeRemoval::NetworkPort.new(joiner_store, sdk_removal_fabric,
+        0xA102_u64, anchor_peer, 1_u16, joiner_client, E2E::COMMAND_TIMEOUT)
+      sdk_removal_store = JfNodeRemoval::JournalStore.new(joiner_store.backend)
+      sdk_removal_journal = sdk_removal_store.load_or_create(
+        sdk_removal_port.initial_journal(SDK_MIGRATION_ANCHOR_NODE_ID, sdk_node.friendly_name))
+      sdk_removal_workflow = JfNodeRemoval::Workflow.new(sdk_removal_journal,
+        sdk_removal_port, sdk_removal_store)
+      sdk_removal_deadline = Time.instant + 180.seconds
+      loop do
+        begin
+          sdk_removal_workflow.run
+          break
+        rescue ex : Matter::CommissioningError
+          raise unless ex.message.try(&.includes?("pending delivery"))
+          raise Matter::TimeoutError.new("SDK Joint Fabric node cleanup did not commit") if Time.instant >= sdk_removal_deadline
+          sleep 1.second
+        end
+      end
+      sdk_removal_workflow.journal.stage.complete?.should be_true
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID)
+        .any?(&.node_id.==(SDK_MIGRATION_ANCHOR_NODE_ID)).should be_false
       # UpdateGroup distributes the replacement key to every Anchor node.
-      # Retire this SDK-only fixture before the separate Crystal-target keyed
+      # Retire this SDK-only group before the separate Crystal-target keyed
       # revocation below, whose target permits three concurrent fabric keys.
-      sdk_remove_membership = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
-        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
-        command_id: JfaRolloutDatastore::CMD_REMOVE_GROUP_ID_FROM_ENDPOINT_FOR_NODE,
-        fields: JfaRolloutDatastore::RemoveGroupIDFromEndpointForNodeRequest.new(
-          SDK_MIGRATION_ANCHOR_NODE_ID, 1_u16, sdk_group_id).to_slice)
-      Matter::Controller::JointCommissioning.assert_status_success(sdk_remove_membership)
       sdk_remove_group = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
         endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
         command_id: JfaRolloutDatastore::CMD_REMOVE_GROUP,
