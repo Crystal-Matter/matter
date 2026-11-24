@@ -142,6 +142,25 @@ describe Provider do
     peer.endings.should eq([Provider::EndReason::OutOfResources])
   end
 
+  it "keeps the previous stream when the host rejects a re-offer" do
+    provider, camera, peer, first_audio_id = web_rtc_fixture
+    second_audio_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
+      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      1_u8, 48_000_u32, 96_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
+    initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [first_audio_id])
+    first = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, initial)
+      .as(Matter::Cluster::CommandResponse)
+    session_id = Provider::ProvideOfferResponse.from_tlv(first.response.as(TLV::Any)).web_rtc_session_id
+
+    peer.reject_offer = true
+    revision = Provider::ProvideOfferRequest.new(session_id, "v=1", audio_streams: [second_audio_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.audio_streams.should eq([first_audio_id])
+    peer.offer_audio_streams.should eq([[first_audio_id]])
+  end
+
   it "accepts an ICE server with an empty URLs list" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     server = Provider::IceServer.new([] of String)
@@ -253,7 +272,7 @@ describe Provider do
     peer.offers.should be_empty
   end
 
-  it "rejects a legacy null stream change on an existing session" do
+  it "selects the allocated stream for a legacy null re-offer ID" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [audio_id])
@@ -262,9 +281,10 @@ describe Provider do
     session_id = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
     revision = Provider::ProvideOfferRequest.new(session_id, "v=1",
       audio_stream_id: TLV::FieldState(UInt16).null)
-    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
-      .as(Status).status.should eq(StatusCode::ConstraintError)
-    peer.offers.should eq(["v=0"])
+    repeated = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Matter::Cluster::CommandResponse)
+    Provider::ProvideOfferResponse.from_tlv(repeated.response.as(TLV::Any)).audio_stream_id.should eq(audio_id)
+    peer.offers.should eq(["v=0", "v=1"])
     provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
   end
 
