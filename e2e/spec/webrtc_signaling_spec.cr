@@ -82,4 +82,27 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       %({"0":"u:0"}), device.node, WEBRTC_ENDPOINT))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
+  it "reoffers an existing session with a different allocated audio stream" do
+    device.restart!
+    first = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    expect_success(first)
+    second = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:96000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    expect_success(second)
+    initial = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})
+    expect_success(webrtc_command(device, 0x02_u32, initial))
+    revision = %({"0":"u:0","1":"v=1","11":["u:1"]})
+    expect_success(webrtc_command(device, 0x02_u32, revision))
+    sessions = expect_success(webrtc_read(device, 0x0000_u32)).output
+    sessions.should contain("AudioStreams: 1 entries")
+    expect_success(device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x2",
+      %({"0":"u:0"}), device.node, WEBRTC_ENDPOINT))
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("1 entries")
+    expect_success(device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x2",
+      %({"0":"u:1"}), device.node, WEBRTC_ENDPOINT))
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+  end
 end
