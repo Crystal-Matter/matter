@@ -12,6 +12,7 @@ private class TestWebRtcPeer < Provider::Peer
   property? reject_offer : Bool = false
   getter solicitations = [] of UInt16
   getter offers = [] of String
+  getter offer_audio_streams = [] of Array(UInt16)?
   getter answers = [] of String
   getter candidates = [] of Provider::IceCandidate
   getter endings = [] of Provider::EndReason
@@ -24,6 +25,7 @@ private class TestWebRtcPeer < Provider::Peer
   def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
     return Status.invalid_in_state if @reject_offer
     @offers << request.sdp
+    @offer_audio_streams << session.audio_streams
     Status.success
   end
 
@@ -52,7 +54,7 @@ private def web_rtc_fixture
   capabilities = CameraAv::AudioCapabilities.new(1_u8, [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8])
   camera = build(CameraAv, microphone_capabilities: capabilities,
     supported_stream_usages: [CameraAv::StreamUsage::LiveView],
-    max_content_buffer_size: 65_536_u32, max_network_bandwidth: 128_000_u32)
+    max_content_buffer_size: 65_536_u32, max_network_bandwidth: 256_000_u32)
   camera.on_audio_allocate { |_request, _id| Status.success }
   camera.on_audio_deallocate { |_id| Status.success }
   stream = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
@@ -113,6 +115,52 @@ private def read_provider_sessions(provider : Provider, acl : ProviderAcl,
 end
 
 describe Provider do
+  it "reassigns an existing offer to another allocated audio stream" do
+    provider, camera, peer, first_audio_id = web_rtc_fixture
+    second_audio_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
+      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      1_u8, 48_000_u32, 96_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
+    initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [first_audio_id])
+    first = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, initial)
+      .as(Matter::Cluster::CommandResponse)
+    session_id = Provider::ProvideOfferResponse.from_tlv(first.response.as(TLV::Any)).web_rtc_session_id
+
+    revision = Provider::ProvideOfferRequest.new(session_id, "v=1", audio_streams: [second_audio_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Matter::Cluster::CommandResponse)
+    peer.offers.should eq(["v=0", "v=1"])
+    peer.offer_audio_streams.should eq([[first_audio_id], [second_audio_id]])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.audio_streams.should eq([second_audio_id])
+
+    camera.audio_stream_deallocate(CameraAv::AudioStreamDeallocateRequest.new(first_audio_id))
+      .as(Status).success?.should be_true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+    camera.audio_stream_deallocate(CameraAv::AudioStreamDeallocateRequest.new(second_audio_id))
+      .as(Status).success?.should be_true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.endings.should eq([Provider::EndReason::OutOfResources])
+  end
+
+  it "keeps the previous stream when the host rejects a re-offer" do
+    provider, camera, peer, first_audio_id = web_rtc_fixture
+    second_audio_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
+      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      1_u8, 48_000_u32, 96_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
+    initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [first_audio_id])
+    first = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, initial)
+      .as(Matter::Cluster::CommandResponse)
+    session_id = Provider::ProvideOfferResponse.from_tlv(first.response.as(TLV::Any)).web_rtc_session_id
+
+    peer.reject_offer = true
+    revision = Provider::ProvideOfferRequest.new(session_id, "v=1", audio_streams: [second_audio_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.audio_streams.should eq([first_audio_id])
+    peer.offer_audio_streams.should eq([[first_audio_id]])
+  end
+
   it "accepts an ICE server with an empty URLs list" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     server = Provider::IceServer.new([] of String)
@@ -224,7 +272,7 @@ describe Provider do
     peer.offers.should be_empty
   end
 
-  it "rejects a legacy null stream change on an existing session" do
+  it "rejects a re-offer that clears its only stream" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [audio_id])

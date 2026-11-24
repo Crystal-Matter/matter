@@ -12,6 +12,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject reserved caller fabric indexes on the bridged Administrator
   Commissioning timed commands before host forwarding callbacks run.
 
+### Matter 1.6 WebRTC Provider re-offer streams
+
+- Allow an existing-session ProvideOffer to select another allocated audio or
+  video stream. The host peer admits the revised session before CurrentSessions
+  changes; releasing the old stream no longer ends the revised session.
+  Verify reassignment with official chip-tool.
+
 ### Matter 1.6 Groupcast fabric validation
 
 - Reject reserved fabric indexes in Groupcast commands before changing

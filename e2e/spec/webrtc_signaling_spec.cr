@@ -82,4 +82,29 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       %({"0":"u:0"}), device.node, WEBRTC_ENDPOINT))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
+  it "reoffers an existing session with a different allocated audio stream" do
+    device.restart!
+    first = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    first_audio_id = expect_success(first).int("audioStreamID") || fail("missing first audio stream ID")
+    second = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:96000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    second_audio_id = expect_success(second).int("audioStreamID") || fail("missing second audio stream ID")
+    second_audio_id.should_not eq(first_audio_id)
+    initial = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:#{first_audio_id}"]})
+    offered = expect_success(webrtc_command(device, 0x02_u32, initial))
+    session_id = offered.int("webRTCSessionID") || fail("missing WebRTC session ID")
+    revision = %({"0":"u:#{session_id}","1":"v=1","11":["u:#{second_audio_id}"]})
+    expect_success(webrtc_command(device, 0x02_u32, revision))
+    sessions = expect_success(webrtc_read(device, 0x0000_u32)).output
+    sessions.should contain("AudioStreams: 1 entries")
+    expect_success(device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x2",
+      %({"0":"u:#{first_audio_id}"}), device.node, WEBRTC_ENDPOINT))
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("1 entries")
+    expect_success(device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x2",
+      %({"0":"u:#{second_audio_id}"}), device.node, WEBRTC_ENDPOINT))
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+  end
 end

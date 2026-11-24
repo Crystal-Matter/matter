@@ -49,6 +49,13 @@ host peer closes, and frame delivery stops. This proves the protocol signaling
 can carry a real ICE/DTLS/SRTP media session to an independent peer and end it
 when software privacy disables LiveView.
 
+An existing WebRTC session can be re-offered with new allocated audio or video
+stream IDs. The Provider passes the proposed assignment to the host `Peer`
+before changing `CurrentSessions`; a rejected re-offer keeps the old assignment.
+After a successful re-offer, releasing an old stream does not end the session,
+while releasing its newly assigned stream does. A host still performs the
+actual media track switch in its `accept_offer` callback.
+
 The Python media engine is a test dependency, not a dependency of the Crystal
 library. The fixture does not exercise a physical sensor, production encoder,
 microphone, Push AV upload, privacy hardware, or the official SDK Camera
