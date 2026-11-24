@@ -272,7 +272,7 @@ describe Provider do
     peer.offers.should be_empty
   end
 
-  it "selects the allocated stream for a legacy null re-offer ID" do
+  it "rejects a re-offer that clears its only stream" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [audio_id])
@@ -281,10 +281,9 @@ describe Provider do
     session_id = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
     revision = Provider::ProvideOfferRequest.new(session_id, "v=1",
       audio_stream_id: TLV::FieldState(UInt16).null)
-    repeated = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
-      .as(Matter::Cluster::CommandResponse)
-    Provider::ProvideOfferResponse.from_tlv(repeated.response.as(TLV::Any)).audio_stream_id.should eq(audio_id)
-    peer.offers.should eq(["v=0", "v=1"])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Status).status.should eq(StatusCode::ConstraintError)
+    peer.offers.should eq(["v=0"])
     provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
   end
 

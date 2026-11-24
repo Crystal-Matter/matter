@@ -384,10 +384,10 @@ module Matter
           return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
           return InteractionModel::Status.constraint_error if (usage = request.stream_usage) && usage != session.stream_usage
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
-          audio_id = selected_audio_id(request.audio_stream_id_state, session.stream_usage)
-          video_id = selected_video_id(request.video_stream_id_state, session.stream_usage)
-          return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
-          return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
+          # On a re-offer, a legacy null ID clears that stream assignment;
+          # automatic stream selection applies only when creating a session.
+          audio_id = request.audio_stream_id_state.value! if request.audio_stream_id_state.value?
+          video_id = request.video_stream_id_state.value! if request.video_stream_id_state.value?
           audio = if request.audio_streams || !request.audio_stream_id_state.absent?
                     selected_audio(request.audio_streams, audio_id)
                   else
@@ -413,9 +413,7 @@ module Matter
           end
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
           schedule_offer_timeout
-          return ProvideOfferResponse.new(id,
-            response_stream_id(request.audio_stream_id_state, audio_id),
-            response_stream_id(request.video_stream_id_state, video_id))
+          return ProvideOfferResponse.new(id, request.audio_stream_id_state, request.video_stream_id_state)
         end
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
