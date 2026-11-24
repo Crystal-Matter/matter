@@ -7,7 +7,8 @@ private alias Admin = Matter::Cluster::AdministratorCommissioning
 
 describe "real target Fabric Synchronization bridge" do
   bridge = E2E::Device["matter_fabric_sync_bridge"]
-  target = E2E::Device["matter_fabric_sync_target"]
+  sdk_target = ENV["MATTER_E2E_SDK16_BRIDGE"]? == "1"
+  target = E2E::Device[sdk_target ? "official-jf-migration-target" : "matter_fabric_sync_target"]
   state_path = File.join(E2E::LOG_DIR, "matter_fabric_sync_bridge.controller.yml")
   consent_path = File.join(E2E::LOG_DIR, "matter_fabric_sync_bridge.consent")
   consent_request_path = consent_path + ".request"
@@ -23,14 +24,38 @@ describe "real target Fabric Synchronization bridge" do
     store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(state_path))
     store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: bootstrap.fabric.controller_node_id))
+    if sdk_target
+      File.write(File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.start"), "")
+      sleep 2.seconds
+    end
     target_peer = Socket::IPAddress.new(target.address, E2E::DEVICE_PORT)
     client = Matter::Controller::Client.new
     begin
+      trust = if sdk_target
+                paa = File.read("/sdk16-credentials/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der").to_slice.dup
+                signers = {} of String => Bytes
+                Dir.glob("/sdk16-credentials/cd-certs/*.der").each do |path|
+                  cert = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+                  ski = LibCrypto.x509_get0_subject_key_id(cert)
+                  next if ski.null? || LibCrypto.asn1_string_length(ski) != 20
+                  ski_bytes = Slice.new(LibCrypto.asn1_string_get0_data(ski), 20).dup
+                  signers[ski_bytes.hexstring.upcase] = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+                end
+                signers.empty?.should be_false
+                Matter::Controller::AttestationTrustStore.new([paa], signers,
+                  allow_test_attestation: true,
+                  revocation_check: ->(_dac : Bytes, _pai : Bytes, _paa : Bytes) {
+                    Matter::Controller::RevocationStatus::Good
+                  })
+              else
+                Matter::Controller::AttestationTrustStore.matter_test_fixture
+              end
+      target_code = sdk_target ? Matter::SetupPayload.generate_manual_code(3842_u16, 20202022_u32) : target.pairing_code
       Matter::Controller::Commissioning::Commissioner.new(store, client,
         timeout: E2E::COMMAND_TIMEOUT,
-        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-          Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
-        target_node_id, target.pairing_code, target_peer)
+        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(trust)).pairing_code(
+        target_node_id, target_code, target_peer)
     ensure
       client.close
     end

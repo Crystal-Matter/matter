@@ -8,6 +8,7 @@ on:
       - docker-compose.yml
       - e2e/sdk16-migration.compose.yml
       - e2e/spec/joint_fabric_two_jfa_spec.cr
+      - e2e/spec/fabric_sync_bridge_spec.cr
       - examples/support/joint_fabric_administrator_device.cr
       - src/matter/controller/joint_fabric_device_migration.cr
 
@@ -72,6 +73,16 @@ jobs:
             --service joint-fabric-migration-target \
             --service official-jf-migration-target \
             -- e2e/spec/joint_fabric_two_jfa_spec.cr
+      - name: Forward bridged commissioning to pinned SDK device
+        timeout-minutes: 60
+        env:
+          COMPOSE_FILE: docker-compose.yml:e2e/sdk16-migration.compose.yml
+          MATTER_E2E_SDK16_BRIDGE: '1'
+        run: |
+          ./test --focused \
+            --service fabric-sync-bridge \
+            --service official-jf-migration-target \
+            -- e2e/spec/fabric_sync_bridge_spec.cr
       - name: Upload protocol logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
