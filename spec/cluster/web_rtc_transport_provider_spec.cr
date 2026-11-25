@@ -436,6 +436,19 @@ describe Provider do
     provider.current_sessions(nil).as(Status).status.should eq(StatusCode::UnsupportedAccess)
   end
 
+  it "returns InvalidCommand for new-session requests without stream selectors" do
+    provider, _camera, peer, _stream_id = web_rtc_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView, 22_u16)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::InvalidCommand)
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView, 22_u16)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::InvalidCommand)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.offers.should be_empty
+    peer.solicitations.should be_empty
+  end
+
   it "solicits a deferred host offer and rejects unsafe ICE or duplicate streams" do
     provider, _camera, peer, stream_id = web_rtc_fixture
     request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
