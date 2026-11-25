@@ -1,5 +1,6 @@
 require "./cluster"
 require "./camera_av_stream_management"
+require "./time_synchronization"
 
 module Matter
   module Cluster
@@ -320,7 +321,8 @@ module Matter
       @pending_signaling_sequence = 0_u64
 
       def initialize(endpoint_id : DataType::EndpointNumber,
-                     @streams : CameraAvStreamManagement, @peer : Peer)
+                     @streams : CameraAvStreamManagement, @peer : Peer,
+                     @time_synchronization : TimeSynchronization? = nil)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("WebRTC Provider and Camera AV streams must share an endpoint") unless @streams.endpoint_id == endpoint_id
         @streams.on_delivery_changed { end_private_sessions }
@@ -350,6 +352,7 @@ module Matter
         return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, request.stream_usage)
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
+        return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
         audio = selected_audio(request.audio_streams, audio_id)
         video = selected_video(request.video_streams, video_id)
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, request.stream_usage)
@@ -422,6 +425,7 @@ module Matter
         return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
         return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, usage)
+        return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
         audio = selected_audio(request.audio_streams, audio_id)
         video = selected_video(request.video_streams, video_id)
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, usage)
@@ -653,13 +657,17 @@ module Matter
                               url.bytesize <= MAX_ICE_URL_LENGTH &&
                               ["stun:", "stuns:", "turn:", "turns:"].any? { |scheme| url.starts_with?(scheme) }
                             end
-        # TLS ICE servers require a fabric-scoped TLSCAID lookup before a host
-        # may trust the remote certificate. This bounded adapter has no CA map.
-        return false if server.urls.any? { |url| url.starts_with?("stuns:") || url.starts_with?("turns:") }
         return false if (username = server.username) && username.bytesize > MAX_ICE_USERNAME_LENGTH
         return false if (credential = server.credential) && credential.bytesize > MAX_ICE_CREDENTIAL_LENGTH
         return false if (caid = server.caid) && caid > MAX_SESSION_ID
         true
+      end
+
+      private def tls_ice_requires_utc?(servers : Array(IceServer)?) : Bool
+        return false unless servers
+        servers.any? do |server|
+          server.urls.any? { |url| url.starts_with?("stuns:") || url.starts_with?("turns:") }
+        end
       end
 
       private def owned_session(id : UInt16, fabric : UInt8, node : UInt64) : Session?

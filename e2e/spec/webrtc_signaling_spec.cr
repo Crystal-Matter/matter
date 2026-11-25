@@ -107,4 +107,19 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       %({"0":"u:#{second_audio_id}"}), device.node, WEBRTC_ENDPOINT))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
+
+  it "requires UTC time before accepting TLS ICE servers" do
+    device.restart!
+    allocated = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    audio_id = expect_success(allocated).int("audioStreamID") || fail("missing audio stream ID")
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","6":[{"0":["turns:relay.example"],"3":"u:1"}],"11":["u:#{audio_id}"]})
+    expect_failure(webrtc_command(device, 0x02_u32, offer), "INVALID_IN_STATE")
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+
+    expect_success(device.invoke("timesynchronization", "set-utctime", ["1000000000", "4"], endpoint: 0))
+    expect_success(webrtc_command(device, 0x02_u32, offer))
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("1 entries")
+  end
 end

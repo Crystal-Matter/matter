@@ -20,7 +20,13 @@ Automatic selection returns `ResourceExhausted` if no matching allocated stream
 exists. New stream creation is not supported.
 
 The constructor requires the same-endpoint camera stream cluster and a `Peer`
-implementation. A host supplies RFC 9429 SDP negotiation, ICE gathering,
+implementation. Pass the Root endpoint `TimeSynchronization` cluster as the
+optional fourth argument when accepting `stuns:` or `turns:` ICE URLs.
+`SolicitOffer` and a new-session `ProvideOffer` return `InvalidInState` for
+these URLs while `UTCTime` is null; after a valid UTC update they pass the
+ICE servers to the host peer. The host must still establish TLS trust for
+the requested CAID and validate the remote server certificate. A host supplies
+RFC 9429 SDP negotiation, ICE gathering,
 candidate exchange, media delivery, and outbound commands to a Requestor. The
 host must send its generated Offer or Answer to the session's
 `peer_endpoint_id`, `peer_node_id`, and `fabric_index`. The `Peer` callback
@@ -42,7 +48,7 @@ chip-tool E2E exercise only Matter command and TLV exchange. Its `RecordingPeer`
 does **not** establish a WebRTC connection, validate SDP, gather ICE candidates,
 or carry audio. Applications must bind a real WebRTC engine before advertising
 this cluster as a media capability. This Provider slice does not yet implement
-automatic stream creation, metadata, or secure STUN/TURN CA lookup. The
+automatic stream creation, metadata, or host certificate validation. The
 Requestor and Push AV clusters are separate components. TCP can carry
 large SDP through the opt-in `TcpEnabledTransport`; UDP retains its small
 Interaction Model payload budget.
