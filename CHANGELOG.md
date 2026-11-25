@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider TLS ICE time gate
+
+- Allow `stuns:` and `turns:` ICE servers when Root Time Synchronization has a
+  non-null `UTCTime`; otherwise new offers return `InvalidInState`. Verify both
+  states with official chip-tool. The host remains responsible for TLS trust
+  and certificate validation.
+
 ### Matter 1.6 bridged commissioning caller validation
 
 - Reject reserved caller fabric indexes on the bridged Administrator

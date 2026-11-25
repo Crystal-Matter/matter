@@ -7,6 +7,7 @@ private alias Provider = Matter::Cluster::WebRtcTransportProvider
 private alias Status = Matter::InteractionModel::Status
 private alias StatusCode = Matter::InteractionModel::StatusCode
 private alias ProviderAcl = Matter::Cluster::AccessControl
+private alias TimeSync = Matter::Cluster::TimeSynchronization
 
 private class TestWebRtcPeer < Provider::Peer
   property? reject_offer : Bool = false
@@ -50,7 +51,7 @@ private class TestWebRtcProvider < Provider
   end
 end
 
-private def web_rtc_fixture
+private def web_rtc_fixture(time_sync : TimeSync? = nil)
   capabilities = CameraAv::AudioCapabilities.new(1_u8, [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8])
   camera = build(CameraAv, microphone_capabilities: capabilities,
     supported_stream_usages: [CameraAv::StreamUsage::LiveView],
@@ -61,7 +62,7 @@ private def web_rtc_fixture
     CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
     1_u8, 48_000_u32, 64_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse)
   peer = TestWebRtcPeer.new
-  provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer)
+  provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer, time_sync)
   {provider, camera, peer, stream.audio_stream_id}
 end
 
@@ -431,7 +432,41 @@ describe Provider do
     unsupported = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [stream_id], ice_servers: [insecure_tls])
     invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, unsupported)
-      .as(Status).status.should eq(StatusCode::ConstraintError)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+  end
+
+  it "requires non-null UTC time for TLS ICE servers in a new offer" do
+    time_sync = TimeSync.new
+    provider, _camera, peer, stream_id = web_rtc_fixture(time_sync)
+    tls_ice = Provider::IceServer.new(["turns:relay.example"], caid: 1_u16)
+    request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [stream_id], ice_servers: [tls_ice])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, request)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    peer.offers.should be_empty
+
+    time_sync.apply_utc_time(TimeSync::SetUtcTimeRequest.new(1_000_000_000_u64,
+      TimeSync::Granularity::Microseconds)).success?.should be_true
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, request)
+      .as(Matter::Cluster::CommandResponse)
+    peer.offers.should eq(["v=0"])
+  end
+
+  it "requires non-null UTC time for a secure STUN solicitation" do
+    time_sync = TimeSync.new
+    provider, _camera, peer, stream_id = web_rtc_fixture(time_sync)
+    request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [stream_id],
+      ice_servers: [Provider::IceServer.new(["stuns:relay.example"])])
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, request)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    peer.solicitations.should be_empty
+
+    time_sync.apply_utc_time(TimeSync::SetUtcTimeRequest.new(1_000_000_000_u64,
+      TimeSync::Granularity::Microseconds)).success?.should be_true
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, request)
+      .as(Matter::Cluster::CommandResponse)
+    peer.solicitations.size.should eq(1)
   end
 
   it "expires a pending offer after thirty seconds" do
