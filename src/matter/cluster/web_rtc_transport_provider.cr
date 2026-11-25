@@ -348,8 +348,14 @@ module Matter
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
         audio_id = selected_audio_id(request.audio_stream_id_state, request.stream_usage)
         video_id = selected_video_id(request.video_stream_id_state, request.stream_usage)
-        return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
-        return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
+        if request.audio_stream_id_state.null? && !audio_id
+          return InteractionModel::Status.invalid_in_state if @streams.allocated_audio_streams.empty?
+          return InteractionModel::Status.resource_exhausted
+        end
+        if request.video_stream_id_state.null? && !video_id
+          return InteractionModel::Status.invalid_in_state if @streams.allocated_video_streams.empty?
+          return InteractionModel::Status.resource_exhausted
+        end
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, request.stream_usage)
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
         return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
@@ -422,8 +428,14 @@ module Matter
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
         audio_id = selected_audio_id(request.audio_stream_id_state, usage)
         video_id = selected_video_id(request.video_stream_id_state, usage)
-        return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
-        return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
+        if request.audio_stream_id_state.null? && !audio_id
+          return InteractionModel::Status.invalid_in_state if @streams.allocated_audio_streams.empty?
+          return InteractionModel::Status.resource_exhausted
+        end
+        if request.video_stream_id_state.null? && !video_id
+          return InteractionModel::Status.invalid_in_state if @streams.allocated_video_streams.empty?
+          return InteractionModel::Status.resource_exhausted
+        end
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, usage)
         return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
         audio = selected_audio(request.audio_streams, audio_id)

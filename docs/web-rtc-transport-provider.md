@@ -16,8 +16,10 @@ The provider preserves an explicit TLV Null separately from an omitted field;
 the multi-stream lists remain the preferred revision 2 form.
 An explicit Null legacy stream ID selects an already allocated stream with the
 requested usage and returns its ID; an omitted ID excludes that media type.
-Automatic selection returns `ResourceExhausted` if no matching allocated stream
-exists. New stream creation is not supported.
+Automatic selection returns `InvalidInState` when no stream of that media type
+is allocated, matching the Matter 1.6 SDK. If streams exist but none matches
+the requested usage, selection returns `ResourceExhausted`. New stream creation
+is not supported.
 
 The constructor requires the same-endpoint camera stream cluster and a `Peer`
 implementation. Pass the Root endpoint `TimeSynchronization` cluster as the
