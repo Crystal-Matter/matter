@@ -16,6 +16,9 @@ The provider preserves an explicit TLV Null separately from an omitted field;
 the multi-stream lists remain the preferred revision 2 form.
 An explicit Null legacy stream ID selects an already allocated stream with the
 requested usage and returns its ID; an omitted ID excludes that media type.
+For a new session, legacy stream ID fields and revision 2 stream lists are
+mutually exclusive, including when the ID is Null or the fields refer to
+different media types. The provider returns `InvalidCommand` for a mixed request.
 Automatic selection returns `InvalidInState` when no stream of that media type
 is allocated, matching the Matter 1.6 SDK. If streams exist but none matches
 the requested usage, selection returns `ResourceExhausted`. New stream creation
