@@ -356,29 +356,35 @@ describe Provider do
     response.keys.should_not contain(2_u8)
   end
 
-  it "reports the automatically selected legacy video ID but omits absent audio IDs" do
-    provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
+  it "rejects mixed legacy IDs and revision 2 stream lists without creating sessions" do
+    provider, _camera, peer, video_id, _request = video_web_rtc_fixture
     solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
       22_u16, video_stream_id: TLV::FieldState(UInt16).null, video_streams: [video_id])
     decoded_solicitation = Provider::SolicitOfferRequest.from_slice(solicitation.to_slice)
     decoded_solicitation.video_stream_id_state.null?.should be_true
     decoded_solicitation.audio_stream_id_state.absent?.should be_true
-    solicited = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
-      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
-    solicited.keys.should contain(2_u8)
-    solicited[2_u8].value.should eq(video_id)
-    solicited.keys.should_not contain(3_u8)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::InvalidCommand)
 
     offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, video_stream_id: TLV::FieldState(UInt16).null, video_streams: [video_id])
     decoded_offer = Provider::ProvideOfferRequest.from_slice(offer.to_slice)
     decoded_offer.video_stream_id_state.null?.should be_true
     decoded_offer.audio_stream_id_state.absent?.should be_true
-    provided = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
-      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
-    provided.keys.should contain(1_u8)
-    provided[1_u8].value.should eq(video_id)
-    provided.keys.should_not contain(2_u8)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::InvalidCommand)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.offers.should be_empty
+  end
+
+  it "rejects a legacy audio ID combined with a revision 2 video list" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: audio_id, video_streams: [0_u16])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::InvalidCommand)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.offers.should be_empty
   end
 
   it "binds a peer offer, answer, ICE candidates and end to the authenticated fabric and node" do
