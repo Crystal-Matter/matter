@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider stream selection presence
+
+- Return `InvalidCommand` when new-session ProvideOffer or SolicitOffer omits
+  every legacy stream ID and revision 2 stream list, matching the pinned SDK.
+  Verify the status with official chip-tool.
+
 ### Matter 1.6 WebRTC Provider mixed stream fields
 
 - Reject new-session requests that combine deprecated stream ID fields with

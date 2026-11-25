@@ -145,4 +145,13 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     expect_failure(webrtc_command(device, 0x00_u32, solicitation), "INVALID_COMMAND")
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
+
+  it "rejects new sessions without any stream selector as InvalidCommand" do
+    device.restart!
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22"})
+    expect_failure(webrtc_command(device, 0x02_u32, offer), "INVALID_COMMAND")
+    solicitation = %({"0":"u:3","1":"u:22"})
+    expect_failure(webrtc_command(device, 0x00_u32, solicitation), "INVALID_COMMAND")
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+  end
 end
