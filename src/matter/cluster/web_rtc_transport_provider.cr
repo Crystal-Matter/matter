@@ -358,6 +358,7 @@ module Matter
           return InteractionModel::Status.invalid_in_state if @streams.allocated_video_streams.empty?
           return InteractionModel::Status.resource_exhausted
         end
+        return InteractionModel::Status.already_exists if duplicate_allocated_stream_ids?(request)
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, request.stream_usage)
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
         return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
@@ -440,6 +441,7 @@ module Matter
           return InteractionModel::Status.invalid_in_state if @streams.allocated_video_streams.empty?
           return InteractionModel::Status.resource_exhausted
         end
+        return InteractionModel::Status.already_exists if duplicate_allocated_stream_ids?(request)
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, usage)
         return InteractionModel::Status.invalid_in_state if tls_ice_requires_utc?(request.ice_servers) && @time_synchronization.try(&.utc_time).nil?
         audio = selected_audio(request.audio_streams, audio_id)
@@ -611,6 +613,20 @@ module Matter
       private def missing_stream_selector?(request : SolicitOfferRequest | ProvideOfferRequest) : Bool
         request.audio_stream_id_state.absent? && request.video_stream_id_state.absent? &&
           request.audio_streams.nil? && request.video_streams.nil?
+      end
+
+      private def duplicate_allocated_stream_ids?(request : SolicitOfferRequest | ProvideOfferRequest) : Bool
+        if video = request.video_streams
+          allocated = @streams.allocated_video_streams
+          return false if video.empty? || video.size > MAX_STREAMS || allocated.empty?
+          return true if video.uniq.size != video.size
+          return false unless video.all? { |id| allocated.any? { |stream| stream.video_stream_id == id } }
+        end
+        if audio = request.audio_streams
+          return false if audio.empty? || audio.size > MAX_STREAMS || @streams.allocated_audio_streams.empty?
+          return true if audio.uniq.size != audio.size
+        end
+        false
       end
 
       private def selected_video_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?

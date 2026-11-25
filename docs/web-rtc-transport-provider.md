@@ -21,6 +21,9 @@ mutually exclusive, including when the ID is Null or the fields refer to
 different media types. The provider returns `InvalidCommand` for a mixed request.
 It also returns `InvalidCommand` when a new-session request supplies none of
 these four stream selector fields.
+For a new session, duplicate IDs in an allocated revision 2 stream list return
+`AlreadyExists`, matching the Matter 1.6 SDK. Rejected requests do not create
+a session or call the host peer.
 Automatic selection returns `InvalidInState` when no stream of that media type
 is allocated, matching the Matter 1.6 SDK. If streams exist but none matches
 the requested usage, selection returns `ResourceExhausted`. New stream creation

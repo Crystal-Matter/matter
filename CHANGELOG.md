@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider duplicate stream status
+
+- Report `AlreadyExists` when an allocated revision 2 stream ID is repeated in
+  a new-session ProvideOffer or SolicitOffer, matching the pinned SDK. Verify
+  both commands with official chip-tool.
+
 ### Matter 1.6 WebRTC Provider stream selection presence
 
 - Return `InvalidCommand` when new-session ProvideOffer or SolicitOffer omits
