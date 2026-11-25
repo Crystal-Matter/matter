@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider automatic stream status
+
+- Return `InvalidInState` for legacy null stream selection when no stream of
+  that media type is allocated, matching the official SDK. Verify both new
+  ProvideOffer and SolicitOffer with chip-tool.
+
 ### Matter 1.6 WebRTC Provider TLS ICE time gate
 
 - Allow `stuns:` and `turns:` ICE servers when Root Time Synchronization has a
