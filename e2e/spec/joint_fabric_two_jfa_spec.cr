@@ -3264,14 +3264,12 @@ describe "three provisioned Joint Fabric Administrators" do
         sdk_removal_port, sdk_removal_store)
       sdk_removal_deadline = Time.instant + 180.seconds
       loop do
-        begin
-          sdk_removal_workflow.run
-          break
-        rescue ex : Matter::CommissioningError
-          raise unless ex.message.try(&.includes?("pending delivery"))
-          raise Matter::TimeoutError.new("SDK Joint Fabric node cleanup did not commit") if Time.instant >= sdk_removal_deadline
-          sleep 1.second
-        end
+        sdk_removal_workflow.run
+        break
+      rescue ex : Matter::CommissioningError
+        raise ex unless ex.message.try(&.includes?("pending delivery"))
+        raise Matter::TimeoutError.new("SDK Joint Fabric node cleanup did not commit") if Time.instant >= sdk_removal_deadline
+        sleep 1.second
       end
       sdk_removal_workflow.journal.stage.complete?.should be_true
       jfa_node_list(anchor_im, anchor_session, anchor_peer,
