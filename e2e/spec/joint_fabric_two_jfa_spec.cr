@@ -3253,11 +3253,18 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_node = jfa_node_list(anchor_im, anchor_session, anchor_peer,
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID)
         .find!(&.node_id.==(SDK_MIGRATION_ANCHOR_NODE_ID))
-      sdk_removal_fabric = joiner_store.load.fabric_for(anchor_bootstrap.fabric.fabric_id,
-        anchor_bootstrap.fabric.root_public_key, 0xA103_u64)
-      sdk_removal_port = JfNodeRemoval::NetworkPort.new(joiner_store, sdk_removal_fabric,
-        0xA102_u64, anchor_peer, 1_u16, joiner_client, E2E::COMMAND_TIMEOUT)
-      sdk_removal_store = JfNodeRemoval::JournalStore.new(joiner_store.backend)
+      # Migration was driven by B's private controller store. Provision the
+      # Anchor controller's peer route before its separate removal workflow.
+      anchor_store.update do |state|
+        state.record_node(anchor_bootstrap.fabric.fabric_id,
+          Matter::Controller::NodeInfo.new(SDK_MIGRATION_ANCHOR_NODE_ID,
+            sdk_recipient_address, E2E::DEVICE_PORT),
+          anchor_bootstrap.fabric.root_public_key,
+          anchor_bootstrap.fabric.controller_node_id)
+      end
+      sdk_removal_port = JfNodeRemoval::NetworkPort.new(anchor_store, anchor_bootstrap.fabric,
+        0xA102_u64, anchor_peer, 1_u16, anchor_client, E2E::COMMAND_TIMEOUT)
+      sdk_removal_store = JfNodeRemoval::JournalStore.new(anchor_store.backend)
       sdk_removal_journal = sdk_removal_store.load_or_create(
         sdk_removal_port.initial_journal(SDK_MIGRATION_ANCHOR_NODE_ID, sdk_node.friendly_name))
       sdk_removal_workflow = JfNodeRemoval::Workflow.new(sdk_removal_journal,
