@@ -122,4 +122,13 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     expect_success(webrtc_command(device, 0x02_u32, offer))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("1 entries")
   end
+
+  it "reports InvalidInState for automatic legacy stream selection without an allocation" do
+    device.restart!
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","5":null})
+    expect_failure(webrtc_command(device, 0x02_u32, offer), "INVALID_IN_STATE")
+    solicitation = %({"0":"u:3","1":"u:22","3":null})
+    expect_failure(webrtc_command(device, 0x00_u32, solicitation), "INVALID_IN_STATE")
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+  end
 end

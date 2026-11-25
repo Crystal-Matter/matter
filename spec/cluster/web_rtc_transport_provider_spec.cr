@@ -268,7 +268,23 @@ describe Provider do
     request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
     invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, request)
-      .as(Status).status.should eq(StatusCode::ResourceExhausted)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.offers.should be_empty
+  end
+
+  it "reports InvalidInState for a null video ID with no video allocation" do
+    provider, camera, peer, video_id, _request = video_web_rtc_fixture
+    camera.video_stream_deallocate(CameraAv::VideoStreamDeallocateRequest.new(video_id))
+      .success?.should be_true
+    request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: TLV::FieldState(UInt16).null)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, request)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
     peer.offers.should be_empty
   end
