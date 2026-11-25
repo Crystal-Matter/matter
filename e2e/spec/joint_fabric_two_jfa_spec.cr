@@ -3279,6 +3279,11 @@ describe "three provisioned Joint Fabric Administrators" do
         sleep 1.second
       end
       sdk_removal_workflow.journal.stage.complete?.should be_true
+      # NetworkPort establishes fresh CASE to the Anchor, superseding this
+      # fixture's earlier Anchor session on the same controller identity.
+      anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        anchor_peer, anchor_bootstrap.fabric, peer_node_id: 0xA102_u64,
+        timeout: E2E::COMMAND_TIMEOUT)
       jfa_node_list(anchor_im, anchor_session, anchor_peer,
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID)
         .any?(&.node_id.==(SDK_MIGRATION_ANCHOR_NODE_ID)).should be_false
