@@ -346,6 +346,7 @@ module Matter
 
       def solicit_offer(request : SolicitOfferRequest) : InteractionModel::Status | SolicitOfferResponse
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
+        return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
         audio_id = selected_audio_id(request.audio_stream_id_state, request.stream_usage)
         video_id = selected_video_id(request.video_stream_id_state, request.stream_usage)
         if request.audio_stream_id_state.null? && !audio_id
@@ -426,6 +427,7 @@ module Matter
         end
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
+        return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
         audio_id = selected_audio_id(request.audio_stream_id_state, usage)
         video_id = selected_video_id(request.video_stream_id_state, usage)
         if request.audio_stream_id_state.null? && !audio_id
@@ -597,6 +599,11 @@ module Matter
         return field.value! if field.value?
         return unless field.null?
         @streams.allocated_audio_streams.find { |stream| stream.stream_usage == usage }.try(&.audio_stream_id)
+      end
+
+      private def mixed_stream_generations?(request : SolicitOfferRequest | ProvideOfferRequest) : Bool
+        (!request.audio_streams.nil? || !request.video_streams.nil?) &&
+          (!request.audio_stream_id_state.absent? || !request.video_stream_id_state.absent?)
       end
 
       private def selected_video_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
