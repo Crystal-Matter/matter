@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   device through Datastore AddACLToNode and removes that access through the
   matching ListID before deleting the device's NodeList entry.
 
+### Matter 1.6 WebRTC Provider duplicate stream status
+
+- Report `AlreadyExists` when an allocated revision 2 stream ID is repeated in
+  a new-session ProvideOffer or SolicitOffer, matching the pinned SDK. Verify
+  both commands with official chip-tool.
+
 ### Matter 1.6 Joint Fabric SDK Binding delivery
 
 - Verify Crystal Anchor Datastore Binding propagation to the pinned SDK

@@ -462,7 +462,8 @@ describe Provider do
     duplicate = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [stream_id, stream_id])
     invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, duplicate)
-      .as(Status).status.should eq(StatusCode::ConstraintError)
+      .as(Status).status.should eq(StatusCode::AlreadyExists)
+    peer.solicitations.should eq([parsed.web_rtc_session_id])
     insecure_tls = Provider::IceServer.new(["turns:relay.example"], caid: 1_u16)
     unsupported = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [stream_id], ice_servers: [insecure_tls])
@@ -621,9 +622,11 @@ describe Provider do
 
   it "rejects invalid video stream selections and ends sessions on final video release" do
     provider, camera, peer, video_id, request = video_web_rtc_fixture
+    duplicate = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_streams: [video_id, video_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, duplicate)
+      .as(Status).status.should eq(StatusCode::AlreadyExists)
     invalid = [
-      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
-        22_u16, video_streams: [video_id, video_id]),
       Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
         22_u16, video_streams: [] of UInt16),
       Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
