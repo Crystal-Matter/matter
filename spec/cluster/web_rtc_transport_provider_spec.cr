@@ -431,7 +431,7 @@ describe Provider do
     wrong_stream = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
       22_u16, audio_streams: [99_u16])
     invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, wrong_stream)
-      .as(Status).status.should eq(StatusCode::ConstraintError)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
     peer.offers.should be_empty
     provider.current_sessions(nil).as(Status).status.should eq(StatusCode::UnsupportedAccess)
   end
