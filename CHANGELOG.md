@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   video stream lists, and `InvalidInState` when no streams of that media type
   are allocated, matching the pinned SDK. Verify with official chip-tool.
 
+### Matter 1.6 Joint Fabric SDK ACL delivery
+
+- Verify a Crystal Anchor grants a revoked controller access to a pinned SDK
+  device through Datastore AddACLToNode and removes that access through the
+  matching ListID before deleting the device's NodeList entry.
+
 ### Matter 1.6 WebRTC Provider duplicate stream status
 
 - Report `AlreadyExists` when an allocated revision 2 stream ID is repeated in
