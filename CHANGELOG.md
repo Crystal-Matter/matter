@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider unknown stream status
+
+- Return `DynamicConstraintError` for unallocated IDs in revision 2 audio or
+  video stream lists, and `InvalidInState` when no streams of that media type
+  are allocated, matching the pinned SDK. Verify with official chip-tool.
+
 ### Matter 1.6 WebRTC Provider duplicate stream status
 
 - Report `AlreadyExists` when an allocated revision 2 stream ID is repeated in

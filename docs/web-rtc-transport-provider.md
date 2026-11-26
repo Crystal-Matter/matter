@@ -24,6 +24,10 @@ these four stream selector fields.
 For a new session, duplicate IDs in an allocated revision 2 stream list return
 `AlreadyExists`, matching the Matter 1.6 SDK. Rejected requests do not create
 a session or call the host peer.
+For a revision 2 stream list, the provider returns `InvalidInState` when that
+media type has no allocated streams and `DynamicConstraintError` when a listed
+ID is not allocated. Video lists are checked before audio lists, as in the
+Matter 1.6 SDK.
 Automatic selection returns `InvalidInState` when no stream of that media type
 is allocated, matching the Matter 1.6 SDK. If streams exist but none matches
 the requested usage, selection returns `ResourceExhausted`. New stream creation

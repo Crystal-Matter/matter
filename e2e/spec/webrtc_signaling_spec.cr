@@ -171,6 +171,8 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
 
   it "reports DynamicConstraintError for an unknown revision 2 audio stream" do
     device.restart!
+    missing_allocation = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:65535"]})
+    expect_failure(webrtc_command(device, 0x02_u32, missing_allocation), "INVALID_IN_STATE")
     allocation = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
       %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
       device.node, WEBRTC_ENDPOINT)

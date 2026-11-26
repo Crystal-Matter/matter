@@ -471,6 +471,29 @@ describe Provider do
       .as(Status).status.should eq(StatusCode::InvalidInState)
   end
 
+  it "reports revision 2 stream-list allocation statuses before calling the host" do
+    provider, camera, peer, audio_id = web_rtc_fixture
+    unknown_id = audio_id == UInt16::MAX ? 0_u16 : UInt16::MAX
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [unknown_id])
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [unknown_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+
+    camera.audio_stream_deallocate(CameraAv::AudioStreamDeallocateRequest.new(audio_id))
+      .as(Status).success?.should be_true
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::InvalidInState)
+    peer.offers.should be_empty
+    peer.solicitations.should be_empty
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+  end
+
   it "requires non-null UTC time for TLS ICE servers in a new offer" do
     time_sync = TimeSync.new
     provider, _camera, peer, stream_id = web_rtc_fixture(time_sync)
@@ -626,11 +649,13 @@ describe Provider do
       22_u16, video_streams: [video_id, video_id])
     invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, duplicate)
       .as(Status).status.should eq(StatusCode::AlreadyExists)
+    unknown = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_streams: [99_u16])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, unknown)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
     invalid = [
       Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
         22_u16, video_streams: [] of UInt16),
-      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
-        22_u16, video_streams: [99_u16]),
       Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::Recording,
         22_u16, video_streams: [video_id]),
     ]
