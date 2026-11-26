@@ -71,4 +71,33 @@ describe "ICD Management registration durability" do
     attributes.should eq(0)
     modes.should eq(0)
   end
+
+  it "persists the new version before notifying for successful register and unregister" do
+    cluster = build(AtomicIcd, 0, feature_map: AtomicIcd::Feature::CheckInProtocolSupport)
+    cluster.request_administer_privilege = true
+    trace = [] of Symbol
+    persisted_versions = [] of UInt32
+    cluster.on_persist_registration = -> do
+      trace << :persist
+      persisted_versions << cluster.data_version
+      true
+    end
+    cluster.on_version_changed = -> { trace << :version; nil }
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+      attribute.should eq(AtomicIcd::ATTR_REGISTERED_CLIENTS)
+      trace << :attribute
+      nil
+    end
+    cluster.on_operating_mode_changed = -> { trace << :mode; nil }
+    first_version = cluster.data_version
+
+    atomic_icd_register(cluster, 123_u64).should be_a(Matter::Cluster::CommandResponse)
+    trace.should eq([:persist, :version, :attribute, :mode])
+    persisted_versions.should eq([first_version &+ 1_u32])
+
+    trace.clear
+    expect_status(atomic_icd_unregister(cluster, 123_u64), AtomicIcdStatus::Success)
+    trace.should eq([:persist, :version, :attribute, :mode])
+    persisted_versions.should eq([first_version &+ 1_u32, first_version &+ 2_u32])
+  end
 end
