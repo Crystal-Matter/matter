@@ -6,6 +6,7 @@ require "../interop/jfa_vvs_dcl_fixture"
 private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
 private alias JfaRollout = Matter::Controller::IpkRollout
 private alias JfNodeRemoval = Matter::Controller::JointFabricNodeRemoval
+private alias SdkBinding = Matter::Cluster::Binding
 MIGRATION_RECOVERY_MIN_WAIT       = 120.seconds
 MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.remove_fabric_response")
@@ -221,6 +222,16 @@ private def jfa_rollout_attribute(type : T.class, im : Matter::Controller::ImCli
   data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
     .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
   T.from_tlv(data.to_slice)
+end
+
+private def sdk_binding_targets(im : Matter::Controller::ImClient,
+                                session : Matter::Session::SecureContext,
+                                peer : Socket::IPAddress) : Array(SdkBinding::Target)
+  report = im.read_attribute(session: session, peer: peer, endpoint_id: 1_u16,
+    cluster_id: SdkBinding::CLUSTER_ID, attribute_id: SdkBinding::ATTR_BINDING)
+  data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  Array(SdkBinding::Target).from_tlv(data.to_slice)
 end
 
 private def assert_joiner_vvs(client : Matter::Controller::Client,
@@ -3188,6 +3199,29 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
         sdk_recipient, anchor_bootstrap.fabric,
         peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_binding_target = JfaRolloutDatastore::DatastoreBindingTargetStruct.new(
+        node: 0xA102_u64, endpoint: 1_u16)
+      sdk_add_binding = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_BINDING_TO_ENDPOINT_FOR_NODE,
+        fields: JfaRolloutDatastore::AddBindingToEndpointForNodeRequest.new(
+          SDK_MIGRATION_ANCHOR_NODE_ID, 1_u16, sdk_binding_target).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_add_binding)
+      sdk_binding_deadline = Time.instant + 120.seconds
+      loop do
+        entries = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointBindingEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_BINDING_LIST)
+        committed = entries.any? do |entry|
+          entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID && entry.endpoint_id == 1_u16 &&
+            entry.binding == sdk_binding_target && entry.status_entry.state.committed?
+        end
+        live = sdk_binding_targets(anchor_im, sdk_anchor_session, sdk_recipient).any? do |entry|
+          entry.node == 0xA102_u64 && entry.endpoint == 1_u16
+        end
+        break if committed && live
+        raise Matter::TimeoutError.new("SDK recipient did not commit Joint Fabric binding") if Time.instant >= sdk_binding_deadline
+        sleep 1.second
+      end
       sdk_off = anchor_im.invoke(session: sdk_anchor_session, peer: sdk_recipient,
         endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
         command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
@@ -3287,6 +3321,11 @@ describe "three provisioned Joint Fabric Administrators" do
       jfa_node_list(anchor_im, anchor_session, anchor_peer,
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID)
         .any?(&.node_id.==(SDK_MIGRATION_ANCHOR_NODE_ID)).should be_false
+      sdk_anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_recipient, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_binding_targets(anchor_im, sdk_anchor_session, sdk_recipient)
+        .any? { |entry| entry.node == 0xA102_u64 && entry.endpoint == 1_u16 }.should be_false
       # UpdateGroup distributes the replacement key to every Anchor node.
       # Retire this SDK-only group before the separate Crystal-target keyed
       # revocation below, whose target permits three concurrent fabric keys.

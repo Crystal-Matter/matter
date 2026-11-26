@@ -13,6 +13,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a new-session ProvideOffer or SolicitOffer, matching the pinned SDK. Verify
   both commands with official chip-tool.
 
+### Matter 1.6 Joint Fabric SDK Binding delivery
+
+- Verify Crystal Anchor Datastore Binding propagation to the pinned SDK
+  all-clusters device and removal before its NodeList entry is deleted.
+
 ### Matter 1.6 WebRTC Provider stream selection presence
 
 - Return `InvalidCommand` when new-session ProvideOffer or SolicitOffer omits
