@@ -129,6 +129,11 @@ blocked removal for operator reconciliation.
   through the committed ordinary-node removal workflow before deleting its
   NodeList entry. This tests Crystal-to-SDK device delivery, not the pinned
   SDK JFA's separate Binding propagation path.
+  The same fixture adds a direct Node ID ACL for a revoked controller through
+  the Crystal Anchor's Datastore, observes restored CASE access to the SDK
+  device, removes the exact ACL ListID, and observes access denied again. This
+  covers Crystal-to-SDK ACL delivery and removal, not the pinned SDK JFA's
+  separate ACL deletion path.
   RemoveGroup retires a rotated key set from every node that received it,
   including nodes that never joined the group.
   RefreshNode rejects a target ProxyView ACL, which the Matter 1.6 Datastore
