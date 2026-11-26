@@ -3261,6 +3261,43 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_survivor_invoker.install_epoch_key(sdk_survivor.fabric_id, sdk_survivor.root_public_key,
         sdk_group_id, sdk_new_epoch_key)
       assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, false)
+      # Exercise explicit JFDS ACL delivery to and deletion from the
+      # independent SDK device. The revoked controller's old CAT remains
+      # denied; only a temporary direct Node ID grant restores access.
+      sdk_direct_acl = JfaRolloutDatastore::DatastoreAccessControlEntryStruct.new(
+        JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+        JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+        [sdk_revoked_id], nil)
+      sdk_direct_add = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_ADD_ACL_TO_NODE,
+        fields: JfaRolloutDatastore::AddACLToNodeRequest.new(
+          SDK_MIGRATION_ANCHOR_NODE_ID, sdk_direct_acl).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_direct_add)
+      wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+        SDK_MIGRATION_ANCHOR_NODE_ID, sdk_revoked_id, 120.seconds)
+      assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, true)
+      sdk_direct_entry = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreACLEntryStruct),
+        anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_ACL_LIST)
+        .find! do |entry|
+          entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID && entry.acl_entry == sdk_direct_acl
+        end
+      sdk_direct_remove = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+        endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+        command_id: JfaRolloutDatastore::CMD_REMOVE_ACL_FROM_NODE,
+        fields: JfaRolloutDatastore::RemoveACLFromNodeRequest.new(
+          sdk_direct_entry.list_id, SDK_MIGRATION_ANCHOR_NODE_ID).to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_direct_remove)
+      sdk_direct_deadline = Time.instant + 120.seconds
+      loop do
+        remaining = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreACLEntryStruct),
+          anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_ACL_LIST)
+          .any?(&.list_id.==(sdk_direct_entry.list_id))
+        break unless remaining
+        raise Matter::TimeoutError.new("SDK direct ACL removal did not commit") if Time.instant >= sdk_direct_deadline
+        sleep 1.second
+      end
+      assert_two_jfa_on_off_access(sdk_revoked_im, sdk_revoked_session, sdk_recipient, false)
       sdk_renewed = sdk_survivor_store.load.fabric_for(sdk_survivor.fabric_id,
         sdk_survivor.root_public_key, sdk_survivor_id)
       sdk_survivor_session = Matter::Controller::Pairing::CasePairing.new.pair(sdk_survivor_client,
