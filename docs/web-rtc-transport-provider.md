@@ -21,6 +21,9 @@ mutually exclusive, including when the ID is Null or the fields refer to
 different media types. The provider returns `InvalidCommand` for a mixed request.
 It also returns `InvalidCommand` when a new-session request supplies none of
 these four stream selector fields.
+For new sessions, a requested stream usage absent from the same-endpoint Camera
+AV `StreamUsagePriorities` returns `DynamicConstraintError`, even if it appears
+in `SupportedStreamUsages`. The provider rejects it before calling the host.
 For a new session, duplicate IDs in an allocated revision 2 stream list return
 `AlreadyExists`, matching the Matter 1.6 SDK. Rejected requests do not create
 a session or call the host peer.
