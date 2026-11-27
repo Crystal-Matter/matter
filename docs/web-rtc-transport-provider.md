@@ -14,6 +14,8 @@ When a legacy `VideoStreamID` or `AudioStreamID` field is present in
 `SolicitOffer` or `ProvideOffer`, the matching response includes that field.
 The provider preserves an explicit TLV Null separately from an omitted field;
 the multi-stream lists remain the preferred revision 2 form.
+For a new session, an explicit legacy stream ID absent from the corresponding
+allocated streams returns `DynamicConstraintError`, matching the Matter 1.6 SDK.
 An explicit Null legacy stream ID selects an already allocated stream with the
 requested usage and returns its ID; an omitted ID excludes that media type.
 For a new session, legacy stream ID fields and revision 2 stream lists are

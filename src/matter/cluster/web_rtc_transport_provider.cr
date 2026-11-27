@@ -349,6 +349,9 @@ module Matter
         return InteractionModel::Status.invalid_command if missing_stream_selector?(request)
         return InteractionModel::Status.dynamic_constraint_error unless @streams.stream_usage_priorities.includes?(request.stream_usage)
         return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
+        if status = explicit_legacy_stream_id_status(request)
+          return status
+        end
         audio_id = selected_audio_id(request.audio_stream_id_state, request.stream_usage)
         video_id = selected_video_id(request.video_stream_id_state, request.stream_usage)
         if request.audio_stream_id_state.null? && !audio_id
@@ -435,6 +438,9 @@ module Matter
         return InteractionModel::Status.invalid_command if missing_stream_selector?(request)
         return InteractionModel::Status.dynamic_constraint_error unless @streams.stream_usage_priorities.includes?(usage)
         return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
+        if status = explicit_legacy_stream_id_status(request)
+          return status
+        end
         audio_id = selected_audio_id(request.audio_stream_id_state, usage)
         video_id = selected_video_id(request.video_stream_id_state, usage)
         if request.audio_stream_id_state.null? && !audio_id
@@ -619,6 +625,22 @@ module Matter
       private def missing_stream_selector?(request : SolicitOfferRequest | ProvideOfferRequest) : Bool
         request.audio_stream_id_state.absent? && request.video_stream_id_state.absent? &&
           request.audio_streams.nil? && request.video_streams.nil?
+      end
+
+      private def explicit_legacy_stream_id_status(request : SolicitOfferRequest | ProvideOfferRequest) : InteractionModel::Status?
+        if request.video_stream_id_state.value?
+          id = request.video_stream_id_state.value!
+          unless @streams.allocated_video_streams.any? { |stream| stream.video_stream_id == id }
+            return InteractionModel::Status.dynamic_constraint_error
+          end
+        end
+        if request.audio_stream_id_state.value?
+          id = request.audio_stream_id_state.value!
+          unless @streams.allocated_audio_streams.any? { |stream| stream.audio_stream_id == id }
+            return InteractionModel::Status.dynamic_constraint_error
+          end
+        end
+        nil
       end
 
       private def allocated_stream_list_status(request : SolicitOfferRequest | ProvideOfferRequest) : InteractionModel::Status?

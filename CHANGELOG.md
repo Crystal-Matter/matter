@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider legacy stream ID status
+
+- Return `DynamicConstraintError` when a new-session ProvideOffer or
+  SolicitOffer names an unallocated explicit legacy audio or video stream ID.
+  Verify the audio wire behavior with official chip-tool.
+
 ### ICD Management registration durability
 
 - Roll back DataVersion with a failed RegisterClient or UnregisterClient durable
