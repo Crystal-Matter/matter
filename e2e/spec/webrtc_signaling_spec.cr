@@ -193,9 +193,9 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       device.node, WEBRTC_ENDPOINT)
     audio_id = expect_success(allocation).int("audioStreamID") || fail("missing audio stream ID")
 
-    offer = %({"0":null,"1":"v=0","2":"u:1","3":"u:22","11":["u:#{audio_id}"]})
+    offer = %({"0":null,"1":"v=0","2":"u:2","3":"u:22","11":["u:#{audio_id}"]})
     expect_failure(webrtc_command(device, 0x02_u32, offer), "DYNAMIC_CONSTRAINT_ERROR")
-    solicitation = %({"0":"u:1","1":"u:22","9":["u:#{audio_id}"]})
+    solicitation = %({"0":"u:2","1":"u:22","9":["u:#{audio_id}"]})
     expect_failure(webrtc_command(device, 0x00_u32, solicitation), "DYNAMIC_CONSTRAINT_ERROR")
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end

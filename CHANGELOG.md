@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 WebRTC Provider stream selection
+
+- Allow an allocated audio or video stream to serve another supported session
+  usage. For a Null legacy stream ID, prefer a matching usage and fall back to
+  an allocated stream, matching the pinned SDK.
+
 ### Dependency compatibility
 
 - Hold the DNS shard to its compatible 1.7 series until its OpenSSL key

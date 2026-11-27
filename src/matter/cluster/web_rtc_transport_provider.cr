@@ -614,7 +614,8 @@ module Matter
       private def selected_audio_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
         return field.value! if field.value?
         return unless field.null?
-        @streams.allocated_audio_streams.find { |stream| stream.stream_usage == usage }.try(&.audio_stream_id)
+        streams = @streams.allocated_audio_streams
+        (streams.find { |stream| stream.stream_usage == usage } || streams.first?).try(&.audio_stream_id)
       end
 
       private def mixed_stream_generations?(request : SolicitOfferRequest | ProvideOfferRequest) : Bool
@@ -666,7 +667,8 @@ module Matter
       private def selected_video_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
         return field.value! if field.value?
         return unless field.null?
-        @streams.allocated_video_streams.find { |stream| stream.stream_usage == usage }.try(&.video_stream_id)
+        streams = @streams.allocated_video_streams
+        (streams.find { |stream| stream.stream_usage == usage } || streams.first?).try(&.video_stream_id)
       end
 
       private def response_stream_id(field : TLV::FieldState(UInt16), selected : UInt16?) : TLV::FieldState(UInt16)
@@ -710,12 +712,12 @@ module Matter
         if audio_ids
           return false unless @streams.feature_map.audio?
           available = @streams.allocated_audio_streams
-          return false unless audio_ids.all? { |id| available.any? { |stream| stream.audio_stream_id == id && stream.stream_usage == usage } }
+          return false unless audio_ids.all? { |id| available.any? { |stream| stream.audio_stream_id == id } }
         end
         if video_ids
           return false unless @streams.feature_map.video?
           available = @streams.allocated_video_streams
-          return false unless video_ids.all? { |id| available.any? { |stream| stream.video_stream_id == id && stream.stream_usage == usage } }
+          return false unless video_ids.all? { |id| available.any? { |stream| stream.video_stream_id == id } }
         end
         true
       end
