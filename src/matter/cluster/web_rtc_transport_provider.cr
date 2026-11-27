@@ -347,6 +347,7 @@ module Matter
       def solicit_offer(request : SolicitOfferRequest) : InteractionModel::Status | SolicitOfferResponse
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
         return InteractionModel::Status.invalid_command if missing_stream_selector?(request)
+        return InteractionModel::Status.dynamic_constraint_error unless @streams.stream_usage_priorities.includes?(request.stream_usage)
         return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
         audio_id = selected_audio_id(request.audio_stream_id_state, request.stream_usage)
         video_id = selected_video_id(request.video_stream_id_state, request.stream_usage)
@@ -432,6 +433,7 @@ module Matter
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
         return InteractionModel::Status.invalid_command if missing_stream_selector?(request)
+        return InteractionModel::Status.dynamic_constraint_error unless @streams.stream_usage_priorities.includes?(usage)
         return InteractionModel::Status.invalid_command if mixed_stream_generations?(request)
         audio_id = selected_audio_id(request.audio_stream_id_state, usage)
         video_id = selected_video_id(request.video_stream_id_state, usage)
