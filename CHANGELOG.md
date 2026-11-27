@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   write, and notify subscribers or reset check-in scheduling only after it
   succeeds.
 
+### Matter 1.6 WebRTC Provider stream usage priorities
+
+- Reject new-session ProvideOffer and SolicitOffer usages absent from Camera AV
+  StreamUsagePriorities with `DynamicConstraintError`, matching the pinned SDK.
+  Verify the wire status with official chip-tool.
+
 ### Matter 1.6 WebRTC Provider unknown stream status
 
 - Return `DynamicConstraintError` for unallocated IDs in revision 2 audio or
