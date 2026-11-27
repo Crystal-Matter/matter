@@ -528,9 +528,21 @@ describe Provider do
       22_u16, audio_streams: [stream_id])
     invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
       .should be_a(Matter::Cluster::CommandResponse)
-    peer.offers.should eq(["v=0"])
-    peer.solicitations.size.should eq(1)
-    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(2)
+    automatic_offer = Provider::ProvideOfferRequest.new(nil, "v=1", CameraAv::StreamUsage::Recording,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    automatic_response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, automatic_offer)
+      .as(Matter::Cluster::CommandResponse)
+    Provider::ProvideOfferResponse.from_tlv(automatic_response.response.as(TLV::Any))
+      .audio_stream_id.should eq(stream_id)
+    automatic_solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::Recording,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    automatic_solicit_response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, automatic_solicitation)
+      .as(Matter::Cluster::CommandResponse)
+    Provider::SolicitOfferResponse.from_tlv(automatic_solicit_response.response.as(TLV::Any))
+      .audio_stream_id.should eq(stream_id)
+    peer.offers.should eq(["v=0", "v=1"])
+    peer.solicitations.size.should eq(2)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(4)
   end
 
   it "solicits a deferred host offer and rejects unsafe ICE or duplicate streams" do

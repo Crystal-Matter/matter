@@ -213,6 +213,13 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     solicitation = %({"0":"u:1","1":"u:22","9":["u:#{audio_id}"]})
     expect_failure(webrtc_command(device, 0x00_u32, solicitation), "INVALID_IN_STATE")
     expect_success(webrtc_command(device, 0x06_u32, %({"0":"u:#{session_id}","1":"u:2"})))
+    automatic_offer = %({"0":null,"1":"v=1","2":"u:1","3":"u:22","5":null})
+    automatic = expect_success(webrtc_command(device, 0x02_u32, automatic_offer))
+    automatic.int("audioStreamID").should eq(audio_id)
+    automatic_session_id = automatic.int("webRTCSessionID") || fail("missing automatic WebRTC session ID")
+    automatic_solicitation = %({"0":"u:1","1":"u:22","3":null})
+    expect_failure(webrtc_command(device, 0x00_u32, automatic_solicitation), "INVALID_IN_STATE")
+    expect_success(webrtc_command(device, 0x06_u32, %({"0":"u:#{automatic_session_id}","1":"u:2"})))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
 
