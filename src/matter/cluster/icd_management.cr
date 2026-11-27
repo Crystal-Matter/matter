@@ -283,6 +283,7 @@ module Matter
                                                                 (request.verification_key.nil? || request.verification_key.try(&.size) == 16)
         index = @registrations.index { |entry| entry.fabric_index == fabric && entry.check_in_node_id == request.check_in_node_id }
         previous = @registrations.dup
+        previous_version = @data_version
         if index
           old = @registrations[index]
           return InteractionModel::Status.failure unless request_administer_privilege? || equivalent_key?(old.key, request.verification_key)
@@ -293,14 +294,10 @@ module Matter
           @registrations << Registration.new(fabric, request.check_in_node_id,
             request.monitored_subject, request.key.dup, request.client_type)
         end
-        increment_version_and_notify(ATTR_REGISTERED_CLIENTS)
+        return InteractionModel::Status.failure unless persist_registration_change(previous, previous_version)
         check_in_identity = {fabric, request.check_in_node_id}
         @check_in_send_count.delete(check_in_identity)
         @check_in_skip_cycles.delete(check_in_identity)
-        if (persist = @on_persist_registration) && !persist.call
-          @registrations = previous
-          return InteractionModel::Status.failure
-        end
         @on_operating_mode_changed.try(&.call)
         RegisterClientResponse.new(@icd_counter)
       end
@@ -312,15 +309,12 @@ module Matter
         return InteractionModel::Status.not_found unless index
         return InteractionModel::Status.failure unless request_administer_privilege? || equivalent_key?(@registrations[index].key, request.verification_key)
         previous = @registrations.dup
+        previous_version = @data_version
         @registrations.delete_at(index)
+        return InteractionModel::Status.failure unless persist_registration_change(previous, previous_version)
         check_in_identity = {fabric, request.check_in_node_id}
         @check_in_send_count.delete(check_in_identity)
         @check_in_skip_cycles.delete(check_in_identity)
-        increment_version_and_notify(ATTR_REGISTERED_CLIENTS)
-        if (persist = @on_persist_registration) && !persist.call
-          @registrations = previous
-          return InteractionModel::Status.failure
-        end
         @on_operating_mode_changed.try(&.call)
         InteractionModel::Status.success
       end
@@ -413,6 +407,20 @@ module Matter
         difference = 0_u8
         expected.each_with_index { |byte, index| difference |= byte ^ provided[index] }
         difference == 0_u8
+      end
+
+      # The persisted snapshot must contain the new DataVersion, but failed
+      # writes must not notify subscribers or advance the live version.
+      private def persist_registration_change(previous : Array(Registration), previous_version : UInt32) : Bool
+        @data_version &+= 1
+        if (persist = @on_persist_registration) && !persist.call
+          @registrations = previous
+          @data_version = previous_version
+          return false
+        end
+        @on_version_changed.try(&.call)
+        notify_changed(ATTR_REGISTERED_CLIENTS)
+        true
       end
 
       private def baseline_active_duration_ms : UInt32

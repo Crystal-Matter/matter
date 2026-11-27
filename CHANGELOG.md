@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### ICD Management registration durability
+
+- Roll back DataVersion with a failed RegisterClient or UnregisterClient durable
+  write, and notify subscribers or reset check-in scheduling only after it
+  succeeds.
+
 ### Matter 1.6 WebRTC Provider stream usage priorities
 
 - Reject new-session ProvideOffer and SolicitOffer usages absent from Camera AV
