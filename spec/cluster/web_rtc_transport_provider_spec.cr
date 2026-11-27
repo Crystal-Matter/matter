@@ -324,6 +324,36 @@ describe Provider do
     response.keys.should_not contain(2_u8)
   end
 
+  it "rejects explicit legacy IDs absent from allocated audio and video streams" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    unknown_audio = audio_id == UInt16::MAX ? 0_u16 : UInt16::MAX
+    audio_offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: unknown_audio)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, audio_offer)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    audio_solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: unknown_audio)
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, audio_solicitation)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    peer.offers.should be_empty
+    peer.solicitations.should be_empty
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+
+    video_provider, _video_camera, video_peer, video_id, _request = video_web_rtc_fixture
+    unknown_video = video_id == UInt16::MAX ? 0_u16 : UInt16::MAX
+    video_offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: unknown_video)
+    invoke_provider(video_provider, Provider::CMD_PROVIDE_OFFER, video_offer)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    video_solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: unknown_video)
+    invoke_provider(video_provider, Provider::CMD_SOLICIT_OFFER, video_solicitation)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    video_peer.offers.should be_empty
+    video_peer.solicitations.should be_empty
+    video_provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+  end
+
   it "retains conditional legacy audio response fields" do
     provider, _camera, _peer, audio_id = web_rtc_fixture
     solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
