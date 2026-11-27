@@ -21,6 +21,7 @@ dependencies:
 
   dns:
     github: spider-gazelle/dns
+    version: ~> 1.7.0
 
   openssl_ext:
     github: spider-gazelle/openssl_ext
