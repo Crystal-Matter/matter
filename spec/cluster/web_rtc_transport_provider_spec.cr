@@ -508,6 +508,31 @@ describe Provider do
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
   end
 
+  it "reports resource failure when the allocated stream has a different supported usage" do
+    capabilities = CameraAv::AudioCapabilities.new(1_u8, [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8])
+    camera = build(CameraAv, microphone_capabilities: capabilities,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
+      max_content_buffer_size: 65_536_u32, max_network_bandwidth: 256_000_u32)
+    camera.on_audio_allocate { |_request, _id| Status.success }
+    stream_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
+      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      1_u8, 48_000_u32, 64_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
+    peer = TestWebRtcPeer.new
+    provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer)
+
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::Recording,
+      22_u16, audio_streams: [stream_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Status).status.should eq(StatusCode::ResourceExhausted)
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::Recording,
+      22_u16, audio_streams: [stream_id])
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Status).status.should eq(StatusCode::DynamicConstraintError)
+    peer.offers.should be_empty
+    peer.solicitations.should be_empty
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+  end
+
   it "solicits a deferred host offer and rejects unsafe ICE or duplicate streams" do
     provider, _camera, peer, stream_id = web_rtc_fixture
     request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
