@@ -199,4 +199,19 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     expect_failure(webrtc_command(device, 0x00_u32, solicitation), "DYNAMIC_CONSTRAINT_ERROR")
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
+
+  it "reports DynamicConstraintError for an unknown explicit legacy audio ID" do
+    device.restart!
+    allocation = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
+      %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
+      device.node, WEBRTC_ENDPOINT)
+    audio_id = expect_success(allocation).int("audioStreamID") || fail("missing audio stream ID")
+    unknown_id = audio_id == UInt16::MAX.to_i64 ? 0_i64 : UInt16::MAX.to_i64
+
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","5":"u:#{unknown_id}"})
+    expect_failure(webrtc_command(device, 0x02_u32, offer), "DYNAMIC_CONSTRAINT_ERROR")
+    solicitation = %({"0":"u:3","1":"u:22","3":"u:#{unknown_id}"})
+    expect_failure(webrtc_command(device, 0x00_u32, solicitation), "DYNAMIC_CONSTRAINT_ERROR")
+    expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
+  end
 end
