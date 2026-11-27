@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Dependency compatibility
+
+- Hold the DNS shard to its compatible 1.7 series until its OpenSSL key
+  declaration agrees with `openssl_ext`; DNS 1.8 breaks Crystal compilation.
+
 ### Matter 1.6 WebRTC Provider legacy stream ID status
 
 - Return `DynamicConstraintError` when a new-session ProvideOffer or
