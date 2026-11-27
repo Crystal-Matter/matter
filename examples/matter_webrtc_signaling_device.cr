@@ -54,7 +54,7 @@ module MatterWebRtcSignaling
       cluster CameraAv,
         microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
           [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
-        supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+        supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
         max_content_buffer_size: 65_536_u32,
         max_network_bandwidth: 2_000_000_u32,
         video_sensor_params: CameraAv::VideoSensorParams.new(1920_u16, 1080_u16, 30_u16),

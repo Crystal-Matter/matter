@@ -16,8 +16,9 @@ The provider preserves an explicit TLV Null separately from an omitted field;
 the multi-stream lists remain the preferred revision 2 form.
 For a new session, an explicit legacy stream ID absent from the corresponding
 allocated streams returns `DynamicConstraintError`, matching the Matter 1.6 SDK.
-An explicit Null legacy stream ID selects an already allocated stream with the
-requested usage and returns its ID; an omitted ID excludes that media type.
+An explicit Null legacy stream ID prefers an allocated stream with the requested
+usage and otherwise selects the first allocated stream; an omitted ID excludes
+that media type. Explicit allocated IDs can serve a different supported usage.
 For a new session, legacy stream ID fields and revision 2 stream lists are
 mutually exclusive, including when the ID is Null or the fields refer to
 different media types. The provider returns `InvalidCommand` for a mixed request.
@@ -54,7 +55,7 @@ non-success Interaction Model status if a media action fails. The cluster will
 not invent an SDP answer or candidates. `SolicitOffer` reports a deferred
 offer; the host must send the actual Offer within 30 seconds.
 
-This slice accepts already allocated audio and video streams and checks stream usage,
+This slice accepts already allocated audio and video streams and checks requested stream usage,
 same-endpoint allocation, hard/soft privacy, and microphone mute before
 admitting or advancing a session. Privacy or final audio release ends affected
 sessions immediately, and fabric removal ends its sessions. All active

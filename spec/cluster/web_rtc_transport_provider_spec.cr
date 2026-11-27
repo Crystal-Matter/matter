@@ -508,6 +508,43 @@ describe Provider do
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
   end
 
+  it "uses an allocated stream for a different supported session usage" do
+    capabilities = CameraAv::AudioCapabilities.new(1_u8, [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8])
+    camera = build(CameraAv, microphone_capabilities: capabilities,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
+      max_content_buffer_size: 65_536_u32, max_network_bandwidth: 256_000_u32)
+    camera.on_audio_allocate { |_request, _id| Status.success }
+    stream_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
+      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      1_u8, 48_000_u32, 64_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
+    peer = TestWebRtcPeer.new
+    provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer)
+
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::Recording,
+      22_u16, audio_streams: [stream_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .should be_a(Matter::Cluster::CommandResponse)
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::Recording,
+      22_u16, audio_streams: [stream_id])
+    invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .should be_a(Matter::Cluster::CommandResponse)
+    automatic_offer = Provider::ProvideOfferRequest.new(nil, "v=1", CameraAv::StreamUsage::Recording,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    automatic_response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, automatic_offer)
+      .as(Matter::Cluster::CommandResponse)
+    Provider::ProvideOfferResponse.from_tlv(automatic_response.response.as(TLV::Any))
+      .audio_stream_id.should eq(stream_id)
+    automatic_solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::Recording,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    automatic_solicit_response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, automatic_solicitation)
+      .as(Matter::Cluster::CommandResponse)
+    Provider::SolicitOfferResponse.from_tlv(automatic_solicit_response.response.as(TLV::Any))
+      .audio_stream_id.should eq(stream_id)
+    peer.offers.should eq(["v=0", "v=1"])
+    peer.solicitations.size.should eq(2)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(4)
+  end
+
   it "solicits a deferred host offer and rejects unsafe ICE or duplicate streams" do
     provider, _camera, peer, stream_id = web_rtc_fixture
     request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
