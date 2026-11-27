@@ -200,7 +200,7 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
 
-  it "reports resource status when a requested usage differs from the allocated audio stream" do
+  it "accepts an allocated audio stream for a different supported session usage" do
     device.restart!
     allocation = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x0",
       %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"}),
@@ -208,9 +208,11 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     audio_id = expect_success(allocation).int("audioStreamID") || fail("missing audio stream ID")
 
     offer = %({"0":null,"1":"v=0","2":"u:1","3":"u:22","11":["u:#{audio_id}"]})
-    expect_failure(webrtc_command(device, 0x02_u32, offer), "RESOURCE_EXHAUSTED")
+    session_id = expect_success(webrtc_command(device, 0x02_u32, offer)).int("webRTCSessionID") ||
+                 fail("missing WebRTC session ID")
     solicitation = %({"0":"u:1","1":"u:22","9":["u:#{audio_id}"]})
-    expect_failure(webrtc_command(device, 0x00_u32, solicitation), "DYNAMIC_CONSTRAINT_ERROR")
+    expect_failure(webrtc_command(device, 0x00_u32, solicitation), "INVALID_IN_STATE")
+    expect_success(webrtc_command(device, 0x06_u32, %({"0":"u:#{session_id}","1":"u:2"})))
     expect_success(webrtc_read(device, 0x0000_u32)).output.should contain("0 entries")
   end
 
