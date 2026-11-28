@@ -1105,7 +1105,14 @@ module MatterJointFabricAdministrator
         unless binding.matches?(fabric)
           if installed = fabric_table.get_fabric(binding.fabric_index)
             if binding.matches?(installed)
-              configure_bootstrap_datastore(fabric, root, icac, key)
+              if ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
+                configure_bootstrap_datastore(fabric, root, icac, key)
+              else
+                # Endpoint 1 now belongs to the joined fabric. Preserve the
+                # original Anchor controller identity without restoring its
+                # Datastore onto that endpoint.
+                configure_propagator(fabric, root)
+              end
               return
             end
           end
@@ -1416,15 +1423,16 @@ module MatterJointFabricAdministrator
     # The operational NOC chains through the Anchor ICAC, while the JFA's
     # committed cross-signed ICAC certifies the JFA signing key. A local JFA
     # proves possession with its private key; an SDK-owned JFA delegates CSR
-    # signing to its authenticated remote provider and retains the operational
-    # ICAC public key while allowing the cross-signer a distinct ICAC ID.
+    # signing to its authenticated remote provider. Its JFA signing key is
+    # bound to the original bootstrap ICAC, not the joined fabric's separate
+    # operational intermediate, and the cross-signer may use another ICAC ID.
     private def joined_icac_matches_fabric?(certificate : Bytes, fabric : Matter::Fabric) : Bool
       installed = fabric.intermediate_cert || return false
       root = fabric.root_cert || return false
       committed_icac = Matter::Crypto::MatterCertificate.from_slice(certificate)
       installed_icac = Matter::Crypto::MatterCertificate.from_slice(installed)
       remote_signer = !!ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
-      expected_identity = remote_signer ? committed_icac.ec_public_key == installed_icac.ec_public_key : committed_icac.subject.icac_id == installed_icac.subject.icac_id
+      expected_identity = remote_signer ? remote_signer_icac_matches_bootstrap?(committed_icac, fabric) : committed_icac.subject.icac_id == installed_icac.subject.icac_id
       unless committed_icac.subject.fabric_id == fabric.fabric_id &&
              committed_icac.subject.icac_id && expected_identity
         ::Log.for("matter.example.joint_fabric_administrator").info { "Joined JFA committed and installed ICAC identities differ" }
@@ -1437,6 +1445,27 @@ module MatterJointFabricAdministrator
     rescue error : Matter::Error
       ::Log.for("matter.example.joint_fabric_administrator").info(exception: error) { "Joined JFA committed ICAC validation failed" }
       false
+    end
+
+    private def remote_signer_icac_matches_bootstrap?(committed_icac : Matter::Crypto::MatterCertificate,
+                                                      joined : Matter::Fabric) : Bool
+      if document = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT)
+        binding = FabricBindingState.from_document(document)
+        bootstrap = fabric_table.get_fabric(binding.fabric_index) || return false
+        return false unless binding.matches?(bootstrap) && bootstrap.fabric_index != joined.fabric_index
+        certificate = bootstrap.intermediate_cert || return false
+        return committed_icac.ec_public_key == Matter::Crypto::MatterCertificate.from_slice(certificate).ec_public_key
+      end
+
+      # The default JFA has no retained bootstrap endpoint or binding. Its
+      # original Anchor fabric remains installed through JCM, so compare the
+      # signer against that validated fabric's ICAC before activating the
+      # joined endpoint after a restart.
+      fabric_table.all_fabrics.any? do |bootstrap|
+        next false if bootstrap.fabric_index == joined.fabric_index || !compliant_anchor_fabric?(bootstrap)
+        certificate = bootstrap.intermediate_cert || next false
+        committed_icac.ec_public_key == Matter::Crypto::MatterCertificate.from_slice(certificate).ec_public_key
+      end
     end
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil

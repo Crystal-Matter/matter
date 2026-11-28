@@ -374,7 +374,11 @@ blocked removal for operator reconciliation.
   Crystal JFA verifies its committed cross-signed ICAC against the fabric root.
   A local signer must prove possession of the committed key; an SDK-owned
   remote signer may use a different ICAC ID when the cross-signed public key
-  matches its commissioned ICAC public key.
+  matches its original, SDK-commissioned bootstrap ICAC public key rather
+  than the joined fabric's operational intermediate key. Without a retained
+  bootstrap endpoint, restart verifies that key against the still-installed
+  original Anchor fabric and restores its controller identity before restoring
+  the joined Administrator service.
   The transfer journal records each completed Administrator credential rotation
   and identifies an uncertain in-flight rotation. After restart, the caller
   must inspect that Administrator's NOC/CAT and reconcile the rotation before
@@ -766,8 +770,11 @@ branch, which was subsequently merged as PR #112.
 `e2e/interop/sdk_jfc_jcm_live.py` separately commissions a Crystal B JFA
 with the official v1.6 JFC, verifies its SDK-held Anchor ICAC CSR, then has a
 Crystal A Anchor complete JCM and validate the cross-signed ICAC and Datastore
-registration. Its dedicated Linux workflow passed with the official SDK
-JFC/JFA binaries. This checks an independent JCM implementation; the official
+registration. It then restarts B before re-reading both fabrics, the committed
+cross-ICAC, and AdministratorFabricIndex, and has the still-running SDK JFC
+read B's Fabrics over its original CASE fabric. Its dedicated Linux workflow
+passed with the official SDK JFC/JFA binaries. This checks an independent JCM
+implementation and post-commit recovery; the official
 multi-ecosystem certification cases are separate coverage.
 The [integrated JCM run](https://github.com/Crystal-Matter/matter/actions/runs/39691566828)
 passed against merged `develop`, including a streamed Anchor ICAC CSR signature
