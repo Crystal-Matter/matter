@@ -1,0 +1,84 @@
+name: Matter 1.6 SDK Camera Controller signaling
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/sdk-camera-controller-signaling.yml'
+      - 'e2e/interop/sdk_camera_controller_signaling.py'
+      - 'examples/matter_webrtc_signaling_device.cr'
+      - 'src/matter/cluster/camera_av_stream_management.cr'
+      - 'src/matter/cluster/web_rtc_transport_provider.cr'
+
+jobs:
+  sdk-camera-controller-signaling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Free space for the official SDK build
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h .
+      - name: Install SDK Camera Controller and discovery dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
+            libglib2.0-dev libssl-dev libevent-dev pkg-config clang ninja-build cmake iproute2 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev libavformat-dev
+          interface="$(ip -o -4 route show default | awk 'NR == 1 {print $5}')"
+          test -n "${interface}"
+          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
+          sudo ip -6 addr add 'fd42:4d41:5454::2/64' dev "${interface}"
+          sudo service dbus start
+          sudo service avahi-daemon start
+          avahi-daemon --check
+      - name: Install Crystal dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Build Crystal signaling fixture
+        run: |
+          mkdir -p tmp/interop-sdk-camera
+          crystal build examples/matter_webrtc_signaling_device.cr \
+            -o tmp/interop-sdk-camera/matter_webrtc_signaling --error-trace
+      - name: Build pinned Matter 1.6 SDK Camera Controller
+        timeout-minutes: 100
+        run: |
+          git clone --depth 1 --branch v1.6.0.0 \
+            https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
+          cd tmp/connectedhomeip
+          ./scripts/checkout_submodules.py --shallow --platform linux
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path('scripts/setup/environment.json').read_text())
+          config['cipd_package_files'] = [
+              package for package in config['cipd_package_files']
+              if not package.endswith('/arm.json')
+          ]
+          Path('objdir-camera-environment.json').write_text(json.dumps(config))
+          PY
+          export PW_CONFIG_FILE=objdir-camera-environment.json
+          source scripts/bootstrap.sh -p linux
+          env -u JAVA_HOME ./scripts/build/build_examples.py \
+            --target linux-x64-camera-controller --build-profile debug build
+          test -x out/linux-x64-camera-controller/chip-camera-controller
+      - name: Verify SDK Controller to Crystal Camera signaling
+        timeout-minutes: 15
+        run: |
+          python3 e2e/interop/sdk_camera_controller_signaling.py \
+            --sdk tmp/connectedhomeip \
+            --camera tmp/interop-sdk-camera/matter_webrtc_signaling \
+            --log-dir tmp/interop-sdk-camera
+      - name: Upload build and protocol logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-camera-controller-signaling-logs
+          path: tmp/interop-sdk-camera/*.log
+          if-no-files-found: warn
