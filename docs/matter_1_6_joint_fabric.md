@@ -374,7 +374,8 @@ blocked removal for operator reconciliation.
   Crystal JFA verifies its committed cross-signed ICAC against the fabric root.
   A local signer must prove possession of the committed key; an SDK-owned
   remote signer may use a different ICAC ID when the cross-signed public key
-  matches its commissioned ICAC public key.
+  matches its original, SDK-commissioned bootstrap ICAC public key rather
+  than the joined fabric's operational intermediate key.
   The transfer journal records each completed Administrator credential rotation
   and identifies an uncertain in-flight rotation. After restart, the caller
   must inspect that Administrator's NOC/CAT and reconcile the rotation before

@@ -12,6 +12,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Restart a Crystal Joint Fabric Administrator after JCM with an official SDK
   Joint Fabric Commissioner, verify its committed cross-ICAC and both fabrics,
   then confirm the SDK Commissioner still reads it over CASE.
+- Restore a remote signer only when its cross-signed JFA key matches the
+  authenticated original bootstrap ICAC; the joined operational intermediate
+  has a different key.
 
 ### Matter 1.6 WebRTC Provider stream selection
 

@@ -2226,9 +2226,12 @@ describe MatterJointFabricAdministrator::Device do
       .should_not contain(0xFFFF_FFFD_FFFF_0001_u64)
 
     # The official SDK JFC owns the ICAC signer remotely. Its cross-signed
-    # ICAC reuses the commissioned ICAC key but can have a different ICAC ID.
+    # ICAC reuses B's original commissioned ICAC key, rather than A's distinct
+    # operational intermediate key, and can have a different ICAC ID.
     remote_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
-      a_operational_icac_key.public_key, 0xA100_u64, 5_u64, a_root_key, 3_u64, Bytes[8], crypto)
+      b_icac_key.public_key, 0xA100_u64, 5_u64, a_root_key, 3_u64, Bytes[8], crypto)
+    wrong_remote_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      a_operational_icac_key.public_key, 0xA100_u64, 5_u64, a_root_key, 3_u64, Bytes[9], crypto)
     previous_remote = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "remote-jfa-csr-#{Random::Secure.hex(6)}")
     remote_joined = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
@@ -2245,7 +2248,7 @@ describe MatterJointFabricAdministrator::Device do
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     wrong_remote.install_test_fabric(b_fabric)
     wrong_remote.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
-      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(wrong_remote_icac).to_document)
     wrong_remote.install_test_fabric(a_fabric)
     wrong_remote.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     if previous_remote
