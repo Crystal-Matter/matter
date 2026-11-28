@@ -281,6 +281,29 @@ def run(args):
             raise RuntimeError("Crystal B did not persist the A-signed cross-ICAC")
         if committed.get("inspected_administrator_fabric_index") != 2:
             raise RuntimeError("Crystal B did not switch AdministratorFabricIndex to A fabric")
+        if committed.get("inspected_fabric_count") != 2:
+            raise RuntimeError("Crystal B did not retain both fabrics after Joint Commissioning")
+
+        # A successful wire response is not sufficient evidence that the new
+        # Administrator fabric survived a process interruption. Keep the SDK
+        # JFC alive while B reloads its committed state from durable storage.
+        b.close()
+        processes.remove(b)
+        b = ManagedProcess("crystal-b-committed-restart", [str(args.jfa), "--no-interactive"],
+                           b_state, logs, b_env)
+        processes.append(b)
+        b.expect(r"Starting in Operational Mode", 60)
+        b.start_background_drain()
+        recovered = inspect_identity(b_command)
+        for field in ("inspected_fabric_count", "inspected_administrator_fabric_index",
+                      "inspected_cross_signed_icac", "inspected_root_public_key",
+                      "inspected_node_id"):
+            if recovered.get(field) != committed.get(field):
+                raise RuntimeError(f"Crystal B changed {field} across committed restart")
+        fabric_read = jfc.command("operationalcredentials read fabrics 11 0")
+        jfc.expect(r"Fabrics:\s*[1-9]\d*\s+entries", 90, fabric_read)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, fabric_read)
+        print("PASS: committed cross-ICAC survived B restart and SDK JFC CASE remained usable", flush=True)
         print(f"PASS: live SDK JFC ↔ Crystal JFA Joint Commissioning; logs: {logs}", flush=True)
     finally:
         for process in reversed(processes):
