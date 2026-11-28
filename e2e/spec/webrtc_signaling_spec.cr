@@ -65,7 +65,7 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
   it "signals an allocated H.264 video-only session and ends it after release" do
     device.restart!
     allocated = device.chip("any", "command-by-id", CAMERA_CLUSTER, "0x3",
-      %({"0":"u:3","1":"u:0","2":"u:15","3":"u:30","4":{"0":"u:320","1":"u:180"},"5":{"0":"u:1280","1":"u:720"},"6":"u:200000","7":"u:1000000","8":"u:30"}),
+      %({"0":"u:3","1":"u:0","2":"u:15","3":"u:30","4":{"0":"u:320","1":"u:180"},"5":{"0":"u:1280","1":"u:720"},"6":"u:200000","7":"u:1000000","8":"u:30","9":false,"10":false}),
       device.node, WEBRTC_ENDPOINT)
     expect_success(allocated)
 
