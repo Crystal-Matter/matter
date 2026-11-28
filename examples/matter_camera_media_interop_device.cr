@@ -32,7 +32,8 @@ module MatterCameraMediaInterop
     end
 
     def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
-      Status.invalid_in_state
+      answer = bound_device.host_accept_offer(session, request.sdp)
+      bound_device.defer_signal(session, &.answer(session, answer))
     end
 
     def accept_answer(session : Provider::Session, sdp : String) : Status
@@ -41,7 +42,7 @@ module MatterCameraMediaInterop
     end
 
     def add_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Status
-      # The host and browser gather candidates into their SDP before exchange.
+      bound_device.host_ice_candidates(session, candidates)
       Status.success
     end
 
@@ -81,7 +82,7 @@ module MatterCameraMediaInterop
         max_network_bandwidth: 2_000_000_u32,
         microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
           [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
-        video_sensor_params: CameraAv::VideoSensorParams.new(1920_u16, 1080_u16, 30_u16),
+        video_sensor_params: CameraAv::VideoSensorParams.new(1920_u16, 1080_u16, 120_u16),
         min_viewport_resolution: CameraAv::VideoResolution.new(160_u16, 90_u16),
         rate_distortion_trade_off_points: [CameraAv::RateDistortionPoint.new(
           CameraAv::VideoCodec::H264, CameraAv::VideoResolution.new(640_u16, 360_u16), 200_000_u32)],
@@ -89,9 +90,10 @@ module MatterCameraMediaInterop
           CameraAv::VideoResolution.new(640_u16, 480_u16), 10_u16,
           CameraAv::ImageCodec::Jpeg, true, true)],
         max_concurrent_encoders: 1_u8,
-        max_encoded_pixel_rate: 62_208_000_u32,
+        max_encoded_pixel_rate: 248_832_000_u32,
         feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Video |
-                     CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy
+                     CameraAv::Feature::Snapshot | CameraAv::Feature::Privacy |
+                     CameraAv::Feature::Watermark | CameraAv::Feature::Osd
       client_cluster Requestor::CLUSTER_ID
     end
   end
@@ -183,6 +185,19 @@ module MatterCameraMediaInterop
 
     def host_answer(session : Provider::Session, sdp : String) : Nil
       media_host_post("/answer", {session_id: session.id, sdp: sdp})
+    end
+
+    def host_accept_offer(session : Provider::Session, sdp : String) : String
+      media_host_post("/accept-offer", {session_id: session.id, sdp: sdp})["sdp"].as_s
+    end
+
+    def host_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Nil
+      wire = candidates.map do |candidate|
+        {candidate:        candidate.candidate,
+         sdp_mid:          candidate.sdp_mid,
+         sdp_m_line_index: candidate.sdp_m_line_index}
+      end
+      media_host_post("/ice-candidates", {session_id: session.id, candidates: wire})
     end
 
     def host_end(session : Provider::Session) : Nil

@@ -57,7 +57,13 @@ while releasing its newly assigned stream does. A host still performs the
 actual media track switch in its `accept_offer` callback.
 
 The Python media engine is a test dependency, not a dependency of the Crystal
-library. The fixture does not exercise a physical sensor, production encoder,
-microphone, Push AV upload, privacy hardware, or the official SDK Camera
-Controller. Applications remain responsible for their media engine and for
-admitting each stream against actual host resources.
+library. A second GitHub Actions lane builds the pinned Matter 1.6 SDK Camera
+Controller. Its `liveview start` command allocates a Crystal video stream and
+sends `ProvideOffer` over TCP CASE. The aiortc host answers that offer and sends
+640×480 synthetic H.264 video; the SDK forwards received RTP to a GStreamer
+pipeline, which decodes frames whose luma changes. This covers the opposite
+offer direction and an independent SDK media receiver. The SDK liveview command
+allocates video only, so this lane does not check Opus decoding. Neither lane
+exercises a physical sensor, production encoder, microphone, Push AV upload,
+or privacy hardware. Applications remain responsible for their media engine
+and for admitting each stream against actual host resources.

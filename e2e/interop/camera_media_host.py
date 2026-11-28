@@ -12,6 +12,7 @@ import struct
 from aiohttp import web
 from aiortc import AudioStreamTrack, RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from aiortc.rtcrtpsender import RTCRtpSender
+from aiortc.sdp import candidate_from_sdp
 from av import AudioFrame, VideoFrame
 
 PORT = 18753
@@ -21,17 +22,19 @@ peers = {}
 
 
 class PatternTrack(VideoStreamTrack):
-    def __init__(self):
+    def __init__(self, width=WIDTH, height=HEIGHT):
         super().__init__()
         self.frames = 0
+        self.width = width
+        self.height = height
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
-        frame = VideoFrame(width=WIDTH, height=HEIGHT, format="yuv420p")
+        frame = VideoFrame(width=self.width, height=self.height, format="yuv420p")
         luminance = 76 if self.frames % 2 == 0 else 180
-        frame.planes[0].update(bytes([luminance]) * (WIDTH * HEIGHT))
-        frame.planes[1].update(bytes([85]) * (WIDTH * HEIGHT // 4))
-        frame.planes[2].update(bytes([255]) * (WIDTH * HEIGHT // 4))
+        frame.planes[0].update(bytes([luminance]) * (self.width * self.height))
+        frame.planes[1].update(bytes([85]) * (self.width * self.height // 4))
+        frame.planes[2].update(bytes([255]) * (self.width * self.height // 4))
         frame.pts = pts
         frame.time_base = time_base
         self.frames += 1
@@ -97,6 +100,46 @@ async def answer(request):
     return web.json_response({"state": pc.connectionState})
 
 
+async def accept_offer(request):
+    """Answer a Matter Requestor's SDP offer with synthetic camera video."""
+    body = await request.json()
+    session_id = body["session_id"]
+    if session_id in peers:
+        raise web.HTTPConflict(text="duplicate session")
+    pc = RTCPeerConnection()
+    track = PatternTrack(width=640, height=480)
+    sender = pc.addTrack(track)
+    transceiver = next(t for t in pc.getTransceivers() if t.sender == sender)
+    codecs = [codec for codec in RTCRtpSender.getCapabilities("video").codecs
+              if codec.mimeType.lower() == "video/h264"]
+    if not codecs:
+        raise web.HTTPServiceUnavailable(text="H.264 codec unavailable")
+    transceiver.setCodecPreferences(codecs)
+    peers[session_id] = (pc, track, None)
+    try:
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type="offer"))
+        await pc.setLocalDescription(await pc.createAnswer())
+    except Exception:
+        peers.pop(session_id, None)
+        await pc.close()
+        raise
+    return web.json_response({"sdp": pc.localDescription.sdp})
+
+
+async def ice_candidates(request):
+    body = await request.json()
+    pc, _track, _audio_track = peers[body["session_id"]]
+    for item in body["candidates"]:
+        value = item["candidate"].removeprefix("a=").removeprefix("candidate:")
+        candidate = candidate_from_sdp(value)
+        candidate.sdpMid = item.get("sdp_mid") or None
+        candidate.sdpMLineIndex = item.get("sdp_m_line_index")
+        if candidate.sdpMid is None and candidate.sdpMLineIndex is None:
+            candidate.sdpMLineIndex = 0
+        await pc.addIceCandidate(candidate)
+    return web.json_response({"state": pc.connectionState})
+
+
 async def end(request):
     session_id = (await request.json())["session_id"]
     entry = peers.pop(session_id, None)
@@ -118,6 +161,7 @@ async def shutdown(app):
 
 app = web.Application()
 app.add_routes([web.post("/offer", offer), web.post("/answer", answer),
+                web.post("/accept-offer", accept_offer), web.post("/ice-candidates", ice_candidates),
                 web.post("/end", end), web.get("/state", state)])
 app.on_shutdown.append(shutdown)
 
