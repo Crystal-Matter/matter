@@ -1425,7 +1425,7 @@ module MatterJointFabricAdministrator
       committed_icac = Matter::Crypto::MatterCertificate.from_slice(certificate)
       installed_icac = Matter::Crypto::MatterCertificate.from_slice(installed)
       remote_signer = !!ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
-      expected_identity = remote_signer ? remote_signer_icac_matches_bootstrap?(committed_icac) : committed_icac.subject.icac_id == installed_icac.subject.icac_id
+      expected_identity = remote_signer ? remote_signer_icac_matches_bootstrap?(committed_icac, fabric) : committed_icac.subject.icac_id == installed_icac.subject.icac_id
       unless committed_icac.subject.fabric_id == fabric.fabric_id &&
              committed_icac.subject.icac_id && expected_identity
         ::Log.for("matter.example.joint_fabric_administrator").info { "Joined JFA committed and installed ICAC identities differ" }
@@ -1440,14 +1440,25 @@ module MatterJointFabricAdministrator
       false
     end
 
-    private def remote_signer_icac_matches_bootstrap?(committed_icac : Matter::Crypto::MatterCertificate) : Bool
-      document = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT) || return false
-      binding = FabricBindingState.from_document(document)
-      bootstrap = fabric_table.get_fabric(binding.fabric_index) || return false
-      return false unless binding.matches?(bootstrap)
-      certificate = bootstrap.intermediate_cert || return false
-      installed_icac = Matter::Crypto::MatterCertificate.from_slice(certificate)
-      committed_icac.ec_public_key == installed_icac.ec_public_key
+    private def remote_signer_icac_matches_bootstrap?(committed_icac : Matter::Crypto::MatterCertificate,
+                                                      joined : Matter::Fabric) : Bool
+      if document = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT)
+        binding = FabricBindingState.from_document(document)
+        bootstrap = fabric_table.get_fabric(binding.fabric_index) || return false
+        return false unless binding.matches?(bootstrap) && bootstrap.fabric_index != joined.fabric_index
+        certificate = bootstrap.intermediate_cert || return false
+        return committed_icac.ec_public_key == Matter::Crypto::MatterCertificate.from_slice(certificate).ec_public_key
+      end
+
+      # The default JFA has no retained bootstrap endpoint or binding. Its
+      # original Anchor fabric remains installed through JCM, so compare the
+      # signer against that validated fabric's ICAC before activating the
+      # joined endpoint after a restart.
+      fabric_table.all_fabrics.any? do |bootstrap|
+        next false if bootstrap.fabric_index == joined.fabric_index || !compliant_anchor_fabric?(bootstrap)
+        certificate = bootstrap.intermediate_cert || next false
+        committed_icac.ec_public_key == Matter::Crypto::MatterCertificate.from_slice(certificate).ec_public_key
+      end
     end
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil

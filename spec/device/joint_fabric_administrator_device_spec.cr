@@ -949,11 +949,14 @@ describe MatterJointFabricAdministrator::Device do
     backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
-    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    icac_key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64, icac_key: icac_key)
     icac = fabric.intermediate_cert || raise Matter::ConfigurationError.new("Joined ICAC missing")
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacKeyState.new(
+        icac_key.private_key, icac_key.public_key).to_document)
     first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
       MatterJointFabricAdministrator::Device::IcacCertificateState.new(icac).to_document)
-    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "jfa-copied-#{Random::Secure.hex(6)}")
     first.install_test_fabric(fabric)
     datastore = first.joint_fabric_datastore
     datastore.anchor_root_ca = fabric.root_cert.as(Bytes)
@@ -2251,6 +2254,29 @@ describe MatterJointFabricAdministrator::Device do
       MatterJointFabricAdministrator::Device::IcacCertificateState.new(wrong_remote_icac).to_document)
     wrong_remote.install_test_fabric(a_fabric)
     wrong_remote.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+
+    # The default SDK-commissioned JFA does not retain endpoint 2 or its
+    # bootstrap binding. Its installed original Anchor ICAC still authenticates
+    # the delegated signer after the joined fabric is restored.
+    ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    remote_backend = Matter::Storage::Memory.new
+    remote_default = InspectableJointFabricAdministratorDevice.new(storage: remote_backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    remote_default.install_test_fabric(b_fabric)
+    remote_default.persistence.app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_BINDING_DOCUMENT).should be_nil
+    remote_default.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(remote_icac).to_document)
+    remote_default.install_test_fabric(a_fabric)
+    remote_default.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    remote_default.persistence.flush
+    remote_default_restored = InspectableJointFabricAdministratorDevice.new(storage: remote_backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    remote_default_restored.prepare_for_start
+    remote_default_restored.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    remote_default_restored.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
+      .cross_signed_icac.should eq(remote_icac)
+    ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
+
     if previous_remote
       ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_remote
     else
