@@ -16,6 +16,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   authenticated original bootstrap ICAC; the joined operational intermediate
   has a different key.
 
+### Camera AV allocation priorities
+
+- Require AudioStreamAllocate and VideoStreamAllocate usages in
+  StreamUsagePriorities and return `InvalidInState` when absent, including
+  usages listed only in SupportedStreamUsages.
+
 ### Matter 1.6 WebRTC Provider stream selection
 
 - Allow an allocated audio or video stream to serve another supported session

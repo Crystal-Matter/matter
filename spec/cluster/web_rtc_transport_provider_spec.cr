@@ -490,7 +490,7 @@ describe Provider do
     camera.stream_usage_priorities.should_not contain(CameraAv::StreamUsage::LiveView)
     camera.on_audio_allocate { |_request, _id| Status.success }
     stream_id = camera.audio_stream_allocate(CameraAv::AudioStreamAllocateRequest.new(
-      CameraAv::StreamUsage::LiveView, CameraAv::AudioCodec::Opus,
+      CameraAv::StreamUsage::Recording, CameraAv::AudioCodec::Opus,
       1_u8, 48_000_u32, 64_000_u32, 16_u8)).as(CameraAv::AudioStreamAllocateResponse).audio_stream_id
     peer = TestWebRtcPeer.new
     provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer)
