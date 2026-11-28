@@ -65,7 +65,7 @@ def run(args):
             f"liveview start {NODE_ID} --min-res-width 640 --min-res-height 480 "
             "--min-framerate 30"
         )
-        controller.expect(r"HandleVideoStreamAllocateResponse", 90, liveview)
+        controller.expect(r"Handle VideoStreamAllocateResponse command", 90, liveview)
         controller.expect(r"WebRTCProviderClient::HandleProvideOfferResponse", 90, liveview)
 
         sessions = controller.command(

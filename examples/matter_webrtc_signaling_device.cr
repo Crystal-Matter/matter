@@ -91,4 +91,5 @@ module MatterWebRtcSignaling
   end
 end
 
-Examples.main("WebRTC signaling fixture") { MatterWebRtcSignaling::Device.new }
+# The SDK Camera Controller requests a large-payload CASE session for SDP.
+Examples.main("WebRTC signaling fixture") { MatterWebRtcSignaling::Device.new(tcp_enabled: true) }
