@@ -21,7 +21,7 @@ CAMERA_ENDPOINT = 1
 def run(args):
     sdk = args.sdk.resolve()
     camera_binary = args.camera.resolve()
-    controller_binary = sdk / "out/linux-x64-camera-controller/chip-camera-controller"
+    controller_binary = sdk / "out/linux-x64-camera-controller-debug/chip-camera-controller"
     if not camera_binary.is_file() or not os.access(camera_binary, os.X_OK):
         raise RuntimeError(f"missing Crystal Camera executable: {camera_binary}")
     if not controller_binary.is_file() or not os.access(controller_binary, os.X_OK):

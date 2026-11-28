@@ -67,7 +67,7 @@ jobs:
           source scripts/bootstrap.sh -p linux
           env -u JAVA_HOME ./scripts/build/build_examples.py \
             --target linux-x64-camera-controller --build-profile debug build
-          test -x out/linux-x64-camera-controller/chip-camera-controller
+          test -x out/linux-x64-camera-controller-debug/chip-camera-controller
       - name: Verify SDK Controller to Crystal Camera signaling
         timeout-minutes: 15
         run: |
