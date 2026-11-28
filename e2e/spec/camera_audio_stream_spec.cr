@@ -74,6 +74,19 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
     read_camera_audio(device, 0x0010_u32).output.should contain("1")
   end
 
+  it "rejects a supported audio usage omitted from stream priorities" do
+    device.restart!
+    expect_success(camera_audio_command(device, 0x0B_u32, %({"0":["u:1"]})))
+    begin
+      request = %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"})
+      expect_failure(camera_audio_command(device, 0x00_u32, request), "INVALID_IN_STATE")
+      read_camera_audio(device, 0x0010_u32).output.should contain("0 entries")
+    ensure
+      device.restart!
+      expect_success(camera_audio_command(device, 0x0B_u32, %({"0":["u:1","u:3"]})))
+    end
+  end
+
   it "persists microphone and soft privacy settings" do
     expect_success(device.write("cameraavstreammanagement", "microphone-volume-level", 70, 1))
     expect_success(device.write("cameraavstreammanagement", "soft-livestream-privacy-mode-enabled", "true", 1))

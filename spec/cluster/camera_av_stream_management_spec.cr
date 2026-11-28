@@ -178,6 +178,17 @@ describe CameraAv do
     resumed.audio_stream_id.should eq(1_u16)
   end
 
+  it "rejects audio allocation for a supported usage omitted from priorities" do
+    camera = camera_av
+    admit_audio(camera)
+    expect_success(invoke(camera, CameraAv::CMD_SET_STREAM_PRIORITIES,
+      CameraAv::SetStreamPrioritiesRequest.new([CameraAv::StreamUsage::Recording])))
+
+    expect_status(invoke(camera, CameraAv::CMD_AUDIO_STREAM_ALLOCATE,
+      audio_request(CameraAv::StreamUsage::LiveView)), CameraCode::InvalidInState)
+    camera.allocated_audio_streams.should be_empty
+  end
+
   it "exposes privacy modes and host pause hooks only when enabled" do
     camera = camera_av(128_000_u32, CameraAv::Feature::Audio | CameraAv::Feature::Privacy)
     changes = [] of {Bool, Bool, Bool}
@@ -229,6 +240,17 @@ private def video_request(usage = CameraAv::StreamUsage::LiveView, max_bit_rate 
 end
 
 describe "Camera AV video feature" do
+  it "rejects video allocation for a supported usage omitted from priorities" do
+    camera = video_camera
+    camera.on_video_allocate { |_request, _id| CameraStatus.success }
+    expect_success(invoke(camera, CameraAv::CMD_SET_STREAM_PRIORITIES,
+      CameraAv::SetStreamPrioritiesRequest.new([CameraAv::StreamUsage::Recording])))
+
+    expect_status(invoke(camera, CameraAv::CMD_VIDEO_STREAM_ALLOCATE,
+      video_request(CameraAv::StreamUsage::LiveView)), CameraCode::InvalidInState)
+    camera.allocated_video_streams.should be_empty
+  end
+
   it "advertises the exact VDO attributes and commands without ADO" do
     camera = video_camera
     read(camera, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(10_u32)
