@@ -2,7 +2,8 @@ require "./support/console"
 require "./support/main"
 
 # Logical signaling fixture. The peer records commands but deliberately does
-# not create a WebRTC connection or deliver media.
+# not create a WebRTC connection or deliver media. It advertises Watermark and
+# OSD so the SDK Camera Controller's explicit disabled flags are conformant.
 module MatterWebRtcSignaling
   DEVICE_ENDPOINT_ID = 1_u16
 
@@ -63,7 +64,8 @@ module MatterWebRtcSignaling
           CameraAv::VideoResolution.new(640_u16, 360_u16), 200_000_u32)],
         max_concurrent_encoders: 1_u8,
         max_encoded_pixel_rate: 62_208_000_u32,
-        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Video | CameraAv::Feature::Privacy
+        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Video | CameraAv::Feature::Privacy |
+                     CameraAv::Feature::Watermark | CameraAv::Feature::Osd
     end
   end
 
