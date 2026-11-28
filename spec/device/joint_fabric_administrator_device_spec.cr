@@ -2259,7 +2259,7 @@ describe MatterJointFabricAdministrator::Device do
     # bootstrap binding. Its installed original Anchor ICAC still authenticates
     # the delegated signer after the joined fabric is restored.
     ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
-    remote_backend = Matter::Storage::Memory.new
+    remote_backend = durable_jfa_backend
     remote_default = InspectableJointFabricAdministratorDevice.new(storage: remote_backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     remote_default.install_test_fabric(b_fabric)
@@ -2369,6 +2369,9 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ALLOW_JCM")
     end
+    remote_default.try(&.shutdown!)
+    remote_default_restored.try(&.shutdown!)
+    cleanup_durable_jfa_backend(remote_backend)
     File.delete?(bootstrap_path) if bootstrap_path
   end
 
