@@ -163,7 +163,8 @@ describe CameraAv do
       CameraAv::SetStreamPrioritiesRequest.new([CameraAv::StreamUsage::LiveView,
                                                 CameraAv::StreamUsage::LiveView])), CameraCode::ConstraintError)
     admit_audio(camera)
-    invoke_response(camera, CameraAv::CMD_AUDIO_STREAM_ALLOCATE, audio_request,
+    invoke_response(camera, CameraAv::CMD_AUDIO_STREAM_ALLOCATE,
+      audio_request(CameraAv::StreamUsage::Recording),
       CameraAv::AudioStreamAllocateResponse)
     expect_status(invoke(camera, CameraAv::CMD_SET_STREAM_PRIORITIES, requested), CameraCode::InvalidInState)
     saved = camera.save_state.as(Matter::Storage::Document)
@@ -174,7 +175,7 @@ describe CameraAv do
     restored.microphone_volume_level.should eq(camera.microphone_volume_level)
     admit_audio(restored)
     resumed = invoke_response(restored, CameraAv::CMD_AUDIO_STREAM_ALLOCATE,
-      audio_request, CameraAv::AudioStreamAllocateResponse)
+      audio_request(CameraAv::StreamUsage::Recording), CameraAv::AudioStreamAllocateResponse)
     resumed.audio_stream_id.should eq(1_u16)
   end
 
@@ -186,6 +187,8 @@ describe CameraAv do
 
     expect_status(invoke(camera, CameraAv::CMD_AUDIO_STREAM_ALLOCATE,
       audio_request(CameraAv::StreamUsage::LiveView)), CameraCode::InvalidInState)
+    expect_status(invoke(camera, CameraAv::CMD_AUDIO_STREAM_ALLOCATE,
+      audio_request(CameraAv::StreamUsage::Analysis)), CameraCode::InvalidInState)
     camera.allocated_audio_streams.should be_empty
   end
 
@@ -248,6 +251,8 @@ describe "Camera AV video feature" do
 
     expect_status(invoke(camera, CameraAv::CMD_VIDEO_STREAM_ALLOCATE,
       video_request(CameraAv::StreamUsage::LiveView)), CameraCode::InvalidInState)
+    expect_status(invoke(camera, CameraAv::CMD_VIDEO_STREAM_ALLOCATE,
+      video_request(CameraAv::StreamUsage::Analysis)), CameraCode::InvalidInState)
     camera.allocated_video_streams.should be_empty
   end
 

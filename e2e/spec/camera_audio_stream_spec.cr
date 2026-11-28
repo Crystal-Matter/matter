@@ -80,6 +80,8 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
     begin
       request = %({"0":"u:3","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"})
       expect_failure(camera_audio_command(device, 0x00_u32, request), "INVALID_IN_STATE")
+      unsupported = %({"0":"u:2","1":"u:0","2":"u:1","3":"u:48000","4":"u:64000","5":"u:16"})
+      expect_failure(camera_audio_command(device, 0x00_u32, unsupported), "INVALID_IN_STATE")
       read_camera_audio(device, 0x0010_u32).output.should contain("0 entries")
     ensure
       device.restart!
