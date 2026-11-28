@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera AV allocation priorities
+
+- Require AudioStreamAllocate and VideoStreamAllocate usages in
+  StreamUsagePriorities and return `InvalidInState` when absent, including
+  usages listed only in SupportedStreamUsages.
+
 ### Matter 1.6 WebRTC Provider stream selection
 
 - Allow an allocated audio or video stream to serve another supported session

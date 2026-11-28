@@ -1372,6 +1372,7 @@ module Matter
           return InteractionModel::Status.invalid_command unless request.osd_enabled.nil?
         end
         return InteractionModel::Status.constraint_error unless valid_video_request?(request)
+        return InteractionModel::Status.invalid_in_state unless @stream_usage_priorities.includes?(request.stream_usage)
         existing_index = @allocated_video_streams.index(&.matches?(request))
         if existing_index
           existing = @allocated_video_streams[existing_index]
@@ -1434,6 +1435,7 @@ module Matter
 
       def audio_stream_allocate(request : AudioStreamAllocateRequest) : InteractionModel::Status | AudioStreamAllocateResponse
         return InteractionModel::Status.constraint_error unless valid_audio_request?(request)
+        return InteractionModel::Status.invalid_in_state unless @stream_usage_priorities.includes?(request.stream_usage)
         existing_index = @allocated_audio_streams.index(&.matches?(request))
         if existing_index
           existing = @allocated_audio_streams[existing_index]
@@ -1603,7 +1605,6 @@ module Matter
       private def valid_audio_request?(request : AudioStreamAllocateRequest) : Bool
         capabilities = @microphone_capabilities || return false
         return false unless request.stream_usage.in?(StreamUsage::Recording, StreamUsage::Analysis, StreamUsage::LiveView)
-        return false unless @supported_stream_usages.includes?(request.stream_usage)
         return false unless capabilities.supported_codecs.includes?(request.audio_codec)
         return false unless request.channel_count.in?(MIN_CHANNEL_COUNT..MAX_CHANNEL_COUNT)
         return false if request.channel_count > capabilities.max_number_of_channels
@@ -1617,7 +1618,6 @@ module Matter
         sensor = @video_sensor_params || return false
         viewport = @min_viewport_resolution || return false
         return false unless request.stream_usage.in?(StreamUsage::Recording, StreamUsage::Analysis, StreamUsage::LiveView)
-        return false unless @supported_stream_usages.includes?(request.stream_usage)
         return false unless @rate_distortion_trade_off_points.any?(&.codec.==(request.video_codec))
         return false if request.min_frame_rate.zero? || request.min_frame_rate > request.max_frame_rate
         return false if request.max_frame_rate > sensor.max_fps
