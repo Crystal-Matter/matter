@@ -71,7 +71,11 @@ def run(args):
         sessions = controller.command(
             f"any read-by-id 0x553 0x0 {NODE_ID} {CAMERA_ENDPOINT}"
         )
-        controller.expect(r"CurrentSessions:\s*1 entries", 60, sessions)
+        # The Camera Controller's generic `any read-by-id` prints TLV rather
+        # than chip-tool's decoded `CurrentSessions: 1 entries` form. Match
+        # the session's live-view usage and allocated video stream list.
+        controller.expect(r"0x3 = 3 \(unsigned\)", 60, sessions)
+        controller.expect(r"0x7 = \[[\s\S]*?0 \(unsigned\)", 30, sessions)
         print("PASS: pinned SDK Camera Controller allocated a Crystal video stream, "
               "completed ProvideOffer, and read one Provider session", flush=True)
     finally:
