@@ -192,12 +192,12 @@ module MatterCameraMediaInterop
     end
 
     def host_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Nil
-      media_host_post("/ice-candidates", {session_id: session.id,
-                                          candidates: candidates.map { |candidate|
-                                            {candidate: candidate.candidate,
-                                             sdp_mid: candidate.sdp_mid,
-                                             sdp_m_line_index: candidate.sdp_m_line_index}
-                                          }})
+      wire = candidates.map do |candidate|
+        {candidate:        candidate.candidate,
+         sdp_mid:          candidate.sdp_mid,
+         sdp_m_line_index: candidate.sdp_m_line_index}
+      end
+      media_host_post("/ice-candidates", {session_id: session.id, candidates: wire})
     end
 
     def host_end(session : Provider::Session) : Nil

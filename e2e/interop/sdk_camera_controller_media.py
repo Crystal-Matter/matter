@@ -83,7 +83,8 @@ def run(args):
     decoder = None
     decoder_log = (logs / "decoder.log").open("wb")
     try:
-        host = ManagedProcess("media-host", [str(args.media_python.resolve()),
+        # A venv's bin/python is a symlink; resolve() would bypass the venv.
+        host = ManagedProcess("media-host", [str(args.media_python.absolute()),
                               str(Path(__file__).with_name("camera_media_host.py"))], logs, logs)
         processes.append(host)
         host.start_background_drain()

@@ -141,6 +141,7 @@ try {
         minFrameRate: 15, maxFrameRate: 30,
         minResolution: { width: 320, height: 180 }, maxResolution: { width: 1280, height: 720 },
         minBitRate: 200000, maxBitRate: 1000000, keyFrameInterval: 30,
+        watermarkEnabled: false, osdEnabled: false,
     });
     provider = endpoint.commandsOf(WebRtcTransportProviderClient);
     await requestor.act(agent => agent.get(WebRtcTransportRequestorServer).upsertSession({
