@@ -136,7 +136,9 @@ and `on_privacy_changed` to pause or resume media delivery. Check `stream_delive
 depend on microphone mute. Soft privacy settings
 are exposed only when the Privacy feature is enabled. Hard privacy is a
 read-only physical state set by the host. Microphone settings, privacy modes,
-stream priorities, and the next audio/video IDs survive restart; active ADO/VDO
+stream priorities, and the next audio/video IDs survive restart. Audio and video
+allocation requires the requested usage in StreamUsagePriorities; an omitted
+supported usage returns `InvalidInState`, matching the Matter 1.6 SDK. Active ADO/VDO
 streams, including their overlay state, are released at restart because host media
 resources must be reopened explicitly. The next video stream ID persists, avoiding
 reuse of a pre-restart ID. SNP allocations are retained and require host callback
