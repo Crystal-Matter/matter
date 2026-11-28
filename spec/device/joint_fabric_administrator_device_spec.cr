@@ -2275,6 +2275,8 @@ describe MatterJointFabricAdministrator::Device do
     remote_default_restored.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
     remote_default_restored.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
       .cross_signed_icac.should eq(remote_icac)
+    remote_default_restored.propagation_fabric_for_spec.try(&.fabric_id).should eq(b_fabric.fabric_id)
+    remote_default_restored.controller_store_for_spec.should_not be_nil
     ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
 
     if previous_remote

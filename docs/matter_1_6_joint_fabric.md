@@ -377,7 +377,8 @@ blocked removal for operator reconciliation.
   matches its original, SDK-commissioned bootstrap ICAC public key rather
   than the joined fabric's operational intermediate key. Without a retained
   bootstrap endpoint, restart verifies that key against the still-installed
-  original Anchor fabric before restoring the joined Administrator service.
+  original Anchor fabric and restores its controller identity before restoring
+  the joined Administrator service.
   The transfer journal records each completed Administrator credential rotation
   and identifies an uncertain in-flight rotation. After restart, the caller
   must inspect that Administrator's NOC/CAT and reconcile the rotation before

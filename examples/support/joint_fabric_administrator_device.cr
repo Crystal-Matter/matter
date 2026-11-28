@@ -1105,7 +1105,14 @@ module MatterJointFabricAdministrator
         unless binding.matches?(fabric)
           if installed = fabric_table.get_fabric(binding.fabric_index)
             if binding.matches?(installed)
-              configure_bootstrap_datastore(fabric, root, icac, key)
+              if ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
+                configure_bootstrap_datastore(fabric, root, icac, key)
+              else
+                # Endpoint 1 now belongs to the joined fabric. Preserve the
+                # original Anchor controller identity without restoring its
+                # Datastore onto that endpoint.
+                configure_propagator(fabric, root)
+              end
               return
             end
           end
